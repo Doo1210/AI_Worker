@@ -2,12 +2,13 @@
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ArrowLeft, ArrowRight, ChatLineRound, CircleCheck, Clock, Close, Document, Tickets } from '@element-plus/icons-vue'
-import { ElTabPane, ElTabs } from 'element-plus'
 import EmployeeTaskViewTabs from '@/components/EmployeeTaskViewTabs.vue'
-import { assignedTasksLabel, taskOverviewLocation } from '@/employeeTaskRoutes'
+import { assignedTasksLabel, employeeRunsLocation, taskOverviewLocation } from '@/employeeTaskRoutes'
 import { usePlatformStore, type Task } from '@/stores/platform'
+import { scenarioNextStep, scenarioProgress, scenarioStatusLabels, useScenarioTaskStore, type ScenarioTask } from '@/stores/scenarioTasks'
 
 const store = usePlatformStore()
+const scenario = useScenarioTaskStore()
 const route = useRoute()
 const statusLabels = {
   '待补充': { label: '待我补充', tone: 'waiting' },
@@ -20,18 +21,30 @@ const employees = computed(() => new Map(store.visibleEmployees.map(employee => 
 const employeeFilter = computed(() => typeof route.query.employee === 'string' ? employees.value.get(route.query.employee) : undefined)
 const taskQuery = computed(() => ({ ...taskOverviewLocation(route.query).query, employee: employeeFilter.value?.id }))
 const fromOverview = computed(() => route.query.from === 'overview')
-const taskListLink = computed(() => fromOverview.value
-  ? taskOverviewLocation(route.query) : { name: 'employee-tasks', query: taskQuery.value })
-const taskListLabel = computed(() => fromOverview.value ? '任务总览' : assignedTasksLabel)
+const fromRuns = computed(() => route.query.from === 'employee-runs')
+const taskListLink = computed(() => fromRuns.value ? employeeRunsLocation(route.query)
+  : fromOverview.value ? taskOverviewLocation(route.query) : { name: 'employee-tasks', query: taskQuery.value })
+const taskListLabel = computed(() => fromRuns.value ? '运行监管' : fromOverview.value ? '任务总览' : assignedTasksLabel)
 const scopedTasks = computed(() => employeeFilter.value
   ? store.myTasks.filter(item => item.employeeId === employeeFilter.value?.id)
   : store.myTasks)
+const scopedScenarioTasks = computed(() => scenario.assignedTasks.filter(task =>
+  !employeeFilter.value || task.employeeId === employeeFilter.value.id))
+
+function scenarioFilter(task: ScenarioTask): Task['status'] {
+  if (task.status === 'completed') return '已完成'
+  if (task.status === 'returned') return '待补充'
+  return '进行中'
+}
+
 const counts = computed(() => ({
-  '全部': scopedTasks.value.length,
-  '待补充': scopedTasks.value.filter(item => item.status === '待补充').length,
-  '进行中': scopedTasks.value.filter(item => item.status === '进行中').length,
-  '已完成': scopedTasks.value.filter(item => item.status === '已完成').length,
+  '全部': scopedTasks.value.length + scopedScenarioTasks.value.length,
+  '待补充': scopedTasks.value.filter(item => item.status === '待补充').length + scopedScenarioTasks.value.filter(item => scenarioFilter(item) === '待补充').length,
+  '进行中': scopedTasks.value.filter(item => item.status === '进行中').length + scopedScenarioTasks.value.filter(item => scenarioFilter(item) === '进行中').length,
+  '已完成': scopedTasks.value.filter(item => item.status === '已完成').length + scopedScenarioTasks.value.filter(item => scenarioFilter(item) === '已完成').length,
 }))
+const filteredScenarioTasks = computed(() => scopedScenarioTasks.value.filter(task =>
+  statusFilter.value === '全部' || statusFilter.value === scenarioFilter(task)))
 const filteredTasks = computed(() => scopedTasks.value
   .filter(item => statusFilter.value === '全部' || item.status === statusFilter.value)
   .sort((a, b) => Number(b.status === '待补充') - Number(a.status === '待补充'))
@@ -104,70 +117,75 @@ function continueTask() {
 </script>
 
 <template>
-  <section class="page employee-tasks-page">
+  <section class="page page-surface employee-tasks-page" :aria-label="selectedTask?.title ?? assignedTasksLabel">
     <template v-if="!taskId">
-      <header class="page-header">
-        <div><h1>{{ assignedTasksLabel }}</h1><p>跟进交办给数字员工的任务，补充信息并查看结果。</p></div>
-        <RouterLink v-if="employeeFilter" class="employee-filter" :to="{ name: 'employee-tasks' }" :aria-label="`清除员工筛选：${employeeFilter.name}`">
-          {{ employeeFilter.name }} <el-icon aria-hidden="true"><Close /></el-icon>
-        </RouterLink>
+      <header class="page-controls">
+        <EmployeeTaskViewTabs />
+        <div class="page-toolbar page-tab-toolbar">
+          <div class="page-segments task-status-filters" role="group" aria-label="按任务状态筛选">
+            <button v-for="filter in statusFilters" :key="filter" class="page-segment" type="button" :aria-pressed="statusFilter === filter" @click="statusFilter = filter">
+              {{ filter === '全部' ? filter : statusLabels[filter].label }} <span class="status-count">{{ counts[filter] }}</span>
+            </button>
+          </div>
+          <div v-if="employeeFilter" class="page-toolbar-filters">
+            <RouterLink class="employee-filter" :to="{ name: 'employee-tasks' }" :aria-label="`清除员工筛选：${employeeFilter.name}`">
+              {{ employeeFilter.name }} <el-icon aria-hidden="true"><Close /></el-icon>
+            </RouterLink>
+          </div>
+        </div>
       </header>
 
-      <EmployeeTaskViewTabs />
-      <ElTabs v-model="statusFilter" class="task-status-tabs" aria-label="按任务状态筛选">
-        <ElTabPane v-for="filter in statusFilters" :key="filter" :name="filter">
-          <template #label>
-            {{ filter === '全部' ? filter : statusLabels[filter].label }} <span class="status-count">{{ counts[filter] }}</span>
-          </template>
-          <template v-if="statusFilter === filter">
-            <ul v-if="filteredTasks.length" class="task-grid" aria-label="交办任务">
-              <li v-for="{ task, employee } in filteredTasks" :key="task.id">
-                <RouterLink class="panel task-card" :to="{ name: 'employee-task', params: { taskId: task.id }, query: taskQuery }" :aria-labelledby="`task-card-${task.id}`">
-                  <div class="task-card-heading">
-                    <h2 :id="`task-card-${task.id}`">{{ task.title }}</h2>
-                    <span class="task-status" :class="statusLabels[task.status].tone">{{ statusLabels[task.status].label }}</span>
-                  </div>
-                  <span v-if="employee" class="task-employee">
-                    <span class="employee-avatar" :style="{ '--employee-color': employee.color }" aria-hidden="true">{{ employee.name.slice(0, 1) }}</span>
-                    {{ employee.name }}
-                  </span>
-                  <p class="task-card-summary">{{ task.detail }}</p>
-                  <el-progress class="task-card-progress" aria-label="任务进度" :percentage="task.progress" :stroke-width="4" :status="task.status === '已完成' ? 'success' : undefined" />
-                  <div class="task-card-footer">
-                    <time class="task-date" :datetime="task.updatedAt">更新于 {{ formatDate(task.updatedAt) }}</time>
-                    <span class="task-card-action">{{ task.status === '已完成' ? '查看结果' : '查看进度' }} <el-icon aria-hidden="true"><ArrowRight /></el-icon></span>
-                  </div>
-                </RouterLink>
-              </li>
-            </ul>
-            <el-empty v-else class="panel" :description="scopedTasks.length ? '此状态暂无任务' : employeeFilter ? '还没有向这位数字员工交办任务' : '还没有交办过任务'" :image-size="88">
-              <RouterLink v-if="!scopedTasks.length && store.visibleEmployees.length" class="task-link" :to="employeeFilter ? { name: 'employee-contact', params: { id: employeeFilter.id } } : { name: 'employee-directory' }">
-                <el-icon><ChatLineRound /></el-icon> 联系数字员工
-              </RouterLink>
-            </el-empty>
-          </template>
-        </ElTabPane>
-      </ElTabs>
+      <ul v-if="filteredTasks.length || filteredScenarioTasks.length" class="page-body task-grid" aria-label="交办任务">
+        <li v-for="task in filteredScenarioTasks" :key="task.id">
+          <RouterLink class="panel task-card" :to="{ name: 'scenario-task', params: { taskId: task.id }, query: { ...taskQuery, from: 'assigned' } }">
+            <div class="task-card-heading">
+              <h2>{{ task.title }}</h2>
+              <span class="task-status" :class="statusLabels[scenarioFilter(task)].tone">{{ scenarioStatusLabels[task.status] }}</span>
+            </div>
+            <span class="task-employee">{{ employees.get(task.employeeId)?.name ?? 'AI 员工' }}</span>
+            <p class="task-card-summary">{{ scenarioNextStep(task) }}</p>
+            <el-progress class="task-card-progress" aria-label="任务进度" :percentage="scenarioProgress(task)" :stroke-width="4" :status="task.status === 'completed' ? 'success' : undefined" />
+            <div class="task-card-footer">
+              <time class="task-date" :datetime="task.updatedAt">更新于 {{ formatDate(task.updatedAt) }}</time>
+              <span class="task-card-action">查看任务 <el-icon aria-hidden="true"><ArrowRight /></el-icon></span>
+            </div>
+          </RouterLink>
+        </li>
+        <li v-for="{ task, employee } in filteredTasks" :key="task.id">
+          <RouterLink class="panel task-card" :to="{ name: 'employee-task', params: { taskId: task.id }, query: taskQuery }" :aria-labelledby="`task-card-${task.id}`">
+            <div class="task-card-heading">
+              <h2 :id="`task-card-${task.id}`">{{ task.title }}</h2>
+              <span class="task-status" :class="statusLabels[task.status].tone">{{ statusLabels[task.status].label }}</span>
+            </div>
+            <span v-if="employee" class="task-employee">
+              <span class="employee-avatar" :style="{ '--employee-color': employee.color }" aria-hidden="true">{{ employee.name.slice(0, 1) }}</span>
+              {{ employee.name }}
+            </span>
+            <p class="task-card-summary">{{ task.detail }}</p>
+            <el-progress class="task-card-progress" aria-label="任务进度" :percentage="task.progress" :stroke-width="4" :status="task.status === '已完成' ? 'success' : undefined" />
+            <div class="task-card-footer">
+              <time class="task-date" :datetime="task.updatedAt">更新于 {{ formatDate(task.updatedAt) }}</time>
+              <span class="task-card-action">{{ task.status === '已完成' ? '查看结果' : '查看进度' }} <el-icon aria-hidden="true"><ArrowRight /></el-icon></span>
+            </div>
+          </RouterLink>
+        </li>
+      </ul>
+      <el-empty v-else :description="counts['全部'] ? '此状态暂无任务' : employeeFilter ? '还没有向这位 AI 员工交办任务' : '还没有交办过任务'" :image-size="88">
+        <RouterLink v-if="!counts['全部'] && store.visibleEmployees.length" class="task-link" :to="employeeFilter ? { name: 'employee-contact', params: { id: employeeFilter.id } } : { name: 'employee-directory' }">
+          <el-icon><ChatLineRound /></el-icon> 联系 AI 员工
+        </RouterLink>
+      </el-empty>
     </template>
 
     <template v-else>
-      <RouterLink class="task-back" :to="taskListLink"><el-icon><ArrowLeft /></el-icon> {{ taskListLabel }}</RouterLink>
+      <div class="page-controls page-toolbar page-tab-toolbar">
+        <RouterLink class="task-back" :to="taskListLink"><el-icon><ArrowLeft /></el-icon> {{ taskListLabel }}</RouterLink>
+        <div v-if="conversationLink" class="page-toolbar-controls">
+          <RouterLink class="task-link" :to="conversationLink"><el-icon><ChatLineRound /></el-icon> 返回原会话</RouterLink>
+        </div>
+      </div>
       <template v-if="selectedTask">
-        <header class="page-header detail-header">
-          <div>
-            <h1>{{ selectedTask.title }}</h1>
-            <div class="detail-meta">
-              <span v-if="selectedEmployee" class="task-employee">
-                <span class="employee-avatar" :style="{ '--employee-color': selectedEmployee.color }" aria-hidden="true">{{ selectedEmployee.name.slice(0, 1) }}</span>
-                {{ selectedEmployee.name }}
-              </span>
-              <span v-if="requestedAt">交办于 <time :datetime="requestedAt">{{ formatDate(requestedAt) }}</time></span>
-            </div>
-          </div>
-          <RouterLink v-if="conversationLink" class="task-link" :to="conversationLink"><el-icon><ChatLineRound /></el-icon> 返回原会话</RouterLink>
-        </header>
-
-        <div class="task-detail-layout">
+        <div class="page-body task-detail-layout">
           <section class="panel detail-panel progress-panel" aria-labelledby="task-progress-heading">
             <div class="progress-heading">
               <h2 id="task-progress-heading" class="section-title">当前进度</h2>
@@ -179,7 +197,7 @@ function continueTask() {
 
             <form v-if="selectedTask.status === '待补充' && linkedThread" class="supplement-form" @submit.prevent="sendSupplement">
               <label for="task-supplement">补充信息</label>
-              <el-input id="task-supplement" v-model="supplementText" type="textarea" :rows="3" placeholder="填写数字员工需要的信息或交付要求" />
+              <el-input id="task-supplement" v-model="supplementText" type="textarea" :rows="3" placeholder="填写 AI 员工需要的信息或交付要求" />
               <div class="supplement-actions">
                 <el-button text size="small" @click="continueTask">按现有资料继续</el-button>
                 <el-button type="primary" native-type="submit" size="small" :disabled="!supplementText.trim()">提交补充</el-button>
@@ -194,6 +212,14 @@ function continueTask() {
           <div class="task-detail-content">
             <section class="panel detail-panel">
               <h2 class="section-title detail-title"><el-icon><Document /></el-icon> 交办内容</h2>
+              <p class="detail-task-name">{{ selectedTask.title }}</p>
+              <div v-if="selectedEmployee || requestedAt" class="detail-meta">
+                <span v-if="selectedEmployee" class="task-employee">
+                  <span class="employee-avatar" :style="{ '--employee-color': selectedEmployee.color }" aria-hidden="true">{{ selectedEmployee.name.slice(0, 1) }}</span>
+                  {{ selectedEmployee.name }}
+                </span>
+                <span v-if="requestedAt">交办于 <time :datetime="requestedAt">{{ formatDate(requestedAt) }}</time></span>
+              </div>
               <p class="task-copy" :class="{ muted: !requestText }">{{ requestText || '暂无原始交办内容' }}</p>
               <template v-if="selectedTask.deliverable">
                 <h3 class="detail-subtitle">期望交付</h3>
@@ -222,7 +248,7 @@ function continueTask() {
           </div>
         </div>
       </template>
-      <el-empty v-else class="panel" description="当前账号无法查看这项任务" :image-size="88">
+      <el-empty v-else description="当前账号无法查看这项任务" :image-size="88">
         <RouterLink class="task-link" :to="taskListLink"><el-icon><Tickets /></el-icon> 查看{{ taskListLabel }}</RouterLink>
       </el-empty>
     </template>
@@ -231,11 +257,8 @@ function continueTask() {
 
 <style scoped>
 .employee-tasks-page { container-type: inline-size; }
-.task-status-tabs :deep(.el-tabs__header) { margin-bottom: 14px; }
-.task-status-tabs :deep(.el-tabs__item) { gap: 6px; padding-inline: 14px; font-size: 13px; }
-.task-status-tabs :deep(.el-tabs__content) { overflow: visible; }
 .status-count { padding: 1px 5px; border-radius: 5px; background: #eef1f6; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
-.task-status-tabs :deep(.el-tabs__item.is-active) .status-count { background: var(--soft); color: var(--accent); }
+.task-status-filters button[aria-pressed="true"] .status-count { background: var(--soft); color: var(--accent); }
 .employee-filter {
   display: inline-flex; align-items: center; gap: 6px; flex: none; max-width: 100%; min-height: 28px; padding: 4px 8px;
   border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--muted); font-size: 12px; overflow-wrap: anywhere;
@@ -243,7 +266,7 @@ function continueTask() {
 .employee-filter:hover { color: var(--accent); border-color: #ccd8fa; }
 .task-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 265px), 1fr));
-  gap: 12px; margin: 0; padding: 0; list-style: none;
+  gap: 12px; margin: 0; list-style: none;
 }
 .task-grid li { min-width: 0; }
 .task-card { display: flex; flex-direction: column; align-items: stretch; gap: 10px; height: 100%; min-width: 0; padding: 14px; }
@@ -273,11 +296,10 @@ function continueTask() {
 .task-date { color: var(--muted); font-size: 12px; }
 .task-date, .activity-meta time { font-variant-numeric: tabular-nums; }
 .task-back, .task-link { display: inline-flex; align-items: center; justify-content: center; gap: 7px; color: var(--accent); font-size: 13px; font-weight: 600; }
-.task-back { margin-bottom: 13px; }
 .task-back:hover, .task-link:hover { text-decoration: underline; }
 .task-link { min-height: 34px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); white-space: nowrap; }
-.detail-header h1 { overflow-wrap: anywhere; }
-.detail-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; color: var(--muted); font-size: 13px; }
+.detail-task-name { margin: 0 0 6px; font-size: 14px; font-weight: 650; overflow-wrap: anywhere; }
+.detail-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-bottom: 8px; color: var(--muted); font-size: 13px; }
 .task-detail-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(245px, 330px); gap: 14px; align-items: start; }
 .progress-panel { grid-area: 1 / 2; }
 .task-detail-content { grid-area: 1 / 1; display: grid; gap: 14px; }
@@ -306,11 +328,7 @@ function continueTask() {
   .progress-panel, .task-detail-content { grid-area: auto; }
 }
 @container (max-width: 420px) {
-  .page-header { flex-wrap: wrap; gap: 8px; }
-  .task-status-tabs :deep(.el-tabs__item) { gap: 3px; padding-inline: 4px; font-size: 12px; }
+  .task-status-filters .page-segment { padding-inline: 4px; }
   .status-count { padding-inline: 2px; }
-}
-@media (max-width: 430px) {
-  .detail-header { flex-wrap: wrap; gap: 10px; }
 }
 </style>

@@ -260,10 +260,7 @@ async function exportHtml() {
     <aside class="studio-assistant" aria-label="设计助理">
       <header class="studio-assistant-header">
         <span class="studio-icon"><Sparkles :size="17" aria-hidden="true" /></span>
-        <div class="studio-assistant-title">
-          <h1>设计工作台</h1>
-          <WorkbenchAssistantSelect class="studio-assistant-select" :fallback-label="fallbackAssistant" />
-        </div>
+        <WorkbenchAssistantSelect class="studio-assistant-select" :fallback-label="fallbackAssistant" />
         <span class="studio-demo">本地演示</span>
       </header>
       <div ref="messages" class="studio-messages" role="log" aria-label="设计对话">
@@ -294,9 +291,9 @@ async function exportHtml() {
     </aside>
 
     <section class="studio-canvas" aria-label="设计画布">
-      <div class="studio-canvas-header">
+      <div class="studio-canvas-header page-toolbar">
         <div class="studio-project"><LayoutGrid :size="16" aria-hidden="true" /><strong>{{ projectName }}</strong><span>· {{ screens.length }} 屏</span></div>
-        <div class="studio-canvas-actions">
+        <div class="studio-canvas-actions page-toolbar-controls">
           <button type="button" aria-label="撤销修改" title="撤销修改" :disabled="!versions.length" @click="undo"><Undo2 :size="16" /></button>
           <button type="button" @click="openDialog('appearance')"><Palette :size="16" aria-hidden="true" />外观</button>
           <button type="button" @click="openDialog('check')"><ScanLine :size="16" aria-hidden="true" />体检</button>
@@ -372,7 +369,6 @@ async function exportHtml() {
 
 <style scoped src="./designStudioWorkbench.css"></style>
 <style scoped>
-.studio-assistant-title { display: grid; flex: 1; min-width: 0; gap: 4px; justify-items: start; }
 .studio-assistant-select { min-width: 0; max-width: 100%; }
 .studio-reply-author { display: block; margin-bottom: 3px; color: #666a80; font-size: 11px; font-weight: 650; }
 </style>

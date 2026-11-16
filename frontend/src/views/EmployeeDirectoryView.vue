@@ -6,12 +6,16 @@ import { Activity, ChevronRight, ClipboardList, MessageSquare, UsersRound } from
 import { employeeExamples } from '@/components/employeeExamples'
 import { autonomousTaskStatusLabels, useEmployeeAutonomousTasks } from '@/stores/employeeAutonomousTasks'
 import { usePlatformStore } from '@/stores/platform'
+import { useScenarioTaskStore } from '@/stores/scenarioTasks'
 
 const platform = usePlatformStore()
+const scenario = useScenarioTaskStore()
 const route = useRoute()
 const router = useRouter()
 const { visibleTasks } = useEmployeeAutonomousTasks()
-const autonomousStatuses = ['running', 'review', 'completed'] as const
+const autonomousStatuses = ['running', 'review', 'blocked', 'returned', 'completed'] as const
+const statusLabels = { ...autonomousTaskStatusLabels, blocked: '执行异常', returned: '已退回' }
+const emptyCounts = () => ({ running: 0, review: 0, blocked: 0, returned: 0, completed: 0 })
 
 const search = computed({
   get: () => typeof route.query.q === 'string' ? route.query.q : '',
@@ -31,7 +35,13 @@ const employees = computed(() => platform.visibleEmployees
 const autonomousCounts = computed(() => {
   const countsByEmployee = new Map<string, Record<typeof autonomousStatuses[number], number>>()
   for (const task of visibleTasks.value) {
-    const counts = countsByEmployee.get(task.employeeId) ?? { running: 0, review: 0, completed: 0 }
+    const counts = countsByEmployee.get(task.employeeId) ?? emptyCounts()
+    counts[task.status] += 1
+    countsByEmployee.set(task.employeeId, counts)
+  }
+  for (const task of scenario.visibleTasks) {
+    if (task.origin === '人员交办') continue
+    const counts = countsByEmployee.get(task.employeeId) ?? emptyCounts()
     counts[task.status] += 1
     countsByEmployee.set(task.employeeId, counts)
   }
@@ -48,25 +58,15 @@ function taskOverviewRoute(id: string) {
 </script>
 
 <template>
-  <section class="page employee-directory" aria-labelledby="directory-title">
-    <header class="page-header directory-header">
-      <div>
-        <h1 id="directory-title">数字员工目录</h1>
-        <p class="muted" aria-live="polite">
-          {{ query ? '找到 ' + employees.length + ' 位员工' : employees.length + ' 位可联系的员工' }}
-        </p>
+  <section class="page page-surface employee-directory" aria-label="AI 员工目录">
+    <header class="page-controls page-toolbar page-tab-toolbar">
+      <div class="page-toolbar-filters directory-filters">
+        <el-input v-model="search" class="directory-search" :prefix-icon="Search" placeholder="搜索员工、岗位或任务" aria-label="搜索 AI 员工" clearable />
+        <span class="directory-count muted" aria-live="polite">{{ employees.length }} 位员工</span>
       </div>
-      <el-input
-        v-model="search"
-        class="employee-search"
-        :prefix-icon="Search"
-        placeholder="搜索员工、岗位或任务"
-        aria-label="搜索数字员工"
-        clearable
-      />
     </header>
 
-    <div v-if="employees.length" class="employee-grid">
+    <div v-if="employees.length" class="page-body employee-grid">
       <article v-for="employee in employees" :key="employee.id" class="panel employee-card">
         <div class="employee-identity">
           <span class="employee-avatar" :style="{ '--employee-color': employee.color }" aria-hidden="true">{{ employee.name.slice(0, 1) }}</span>
@@ -98,7 +98,7 @@ function taskOverviewRoute(id: string) {
             <template v-if="autonomousCounts.has(employee.id)">
               <template v-for="status in autonomousStatuses" :key="status">
                 <span v-if="autonomousCounts.get(employee.id)?.[status]" :class="status">
-                  {{ autonomousTaskStatusLabels[status] }} {{ autonomousCounts.get(employee.id)?.[status] }}
+                  {{ statusLabels[status] }} {{ autonomousCounts.get(employee.id)?.[status] }}
                 </span>
               </template>
             </template>
@@ -117,9 +117,9 @@ function taskOverviewRoute(id: string) {
       </article>
     </div>
 
-    <div v-else class="panel directory-empty">
+    <div v-else class="directory-empty">
       <UsersRound :size="25" :stroke-width="1.6" aria-hidden="true" />
-      <h2>{{ query ? '没有匹配的数字员工' : '暂无可联系的数字员工' }}</h2>
+      <h2>{{ query ? '没有匹配的 AI 员工' : '暂无可联系的 AI 员工' }}</h2>
       <p v-if="!query">获得使用授权后，员工会出现在这里。</p>
       <el-button v-else text type="primary" @click="search = ''">清除搜索</el-button>
     </div>
@@ -127,9 +127,9 @@ function taskOverviewRoute(id: string) {
 </template>
 
 <style scoped>
-.directory-header { align-items: center; margin-bottom: 16px; }
-.directory-header p { font-size: 13px; }
-.employee-search { width: min(100%, 250px); }
+.directory-count { flex: none; font-size: 12px; white-space: nowrap; }
+.directory-filters { flex: 1 1 180px; }
+.directory-search { flex: 1 1 150px; max-width: 250px; }
 .employee-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(268px, 100%), 1fr)); gap: 14px; }
 .employee-card { display: flex; min-width: 0; flex-direction: column; padding: 17px; }
 .employee-identity { display: flex; align-items: center; gap: 11px; min-width: 0; }
@@ -172,8 +172,4 @@ a.autonomous-summary:hover { border-color: #b4c6f6; background: #f6f8ff; }
 .directory-empty > svg { color: var(--muted); }
 .directory-empty h2 { margin: 0; font-size: 15px; }
 .directory-empty p { margin: 0; color: var(--muted); font-size: 13px; }
-@media (max-width: 700px) {
-  .directory-header { flex-direction: column; align-items: stretch; }
-  .employee-search { width: 100%; }
-}
 </style>

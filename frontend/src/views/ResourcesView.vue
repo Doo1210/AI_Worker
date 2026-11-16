@@ -1,27 +1,34 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { ArrowRight, Collection, Connection, Cpu, Plus, Reading, Search, Tools } from '@element-plus/icons-vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ArrowRight, Collection, Plus, Search } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { makeId, usePlatformStore } from '@/stores/platform'
+import { resourceLibraryLocation, resourceScopeFromQuery, resourceTypeFromQuery, resourceTypeItems, resourceTypes, type ResourceScopeFilter } from '@/resourceNavigation'
+import { resourceUnavailableReason } from '@/resourceAvailability'
+import { makeId, usePlatformStore, type Resource } from '@/stores/platform'
 import { useOrganizationAdminStore } from '@/stores/organizationAdmin'
 
+const route = useRoute()
+const router = useRouter()
 const platform = usePlatformStore()
 const organization = useOrganizationAdminStore()
-type Resource = (typeof platform.resources)[number]
-const types: Resource['type'][] = ['模型', '技能', 'MCP', '知识', '工具']
 const canDevelop = computed(() => platform.currentUser.role === 'admin' || organization.capabilities.some(item =>
-  types.some(type => type === item.type) && (organization.canConfigureCapability(item.id) || organization.canPublishCapability(item.id))))
-const scopes: { value: 'all' | Resource['scope']; label: string }[] = [
-  { value: 'all', label: '全部来源' },
-  { value: 'personal', label: '个人资源' },
-  { value: 'organization', label: '组织共享' },
-  { value: 'shared', label: '成员共享' },
+  resourceTypes.some(type => type === item.type) && (organization.canConfigureCapability(item.id) || organization.canPublishCapability(item.id))))
+const scopes: { value: ResourceScopeFilter; label: string }[] = [
+  { value: 'all', label: '全部' },
+  { value: 'own', label: '我的' },
+  { value: 'shared', label: '共享' },
 ]
 const statuses: Resource['status'][] = ['可用', '未连接', '停用']
-const icons = { 模型: Cpu, 技能: Collection, MCP: Connection, 知识: Reading, 工具: Tools }
-const typeFilter = ref<'' | Resource['type']>('')
-const scopeFilter = ref<'all' | Resource['scope']>('all')
-const search = ref('')
+const icons = new Map(resourceTypeItems.map(({ type, icon }) => [type, icon]))
+const typeFilter = computed(() => resourceTypeFromQuery(route.query))
+const scopeFilter = computed(() => resourceScopeFromQuery(route.query))
+const search = computed({
+  get: () => typeof route.query.q === 'string' ? route.query.q : '',
+  set: (value: string) => {
+    void router.replace(resourceLibraryLocation({ ...route.query, q: value || null }, typeFilter.value))
+  },
+})
 const dialogOpen = ref(false)
 const detailMode = ref(false)
 const resourceId = ref('')
@@ -29,31 +36,85 @@ const name = ref('')
 const description = ref('')
 const resourceType = ref<Resource['type']>('知识')
 const resourceStatus = ref<Resource['status']>('可用')
+const selectedResource = computed(() => platform.visibleResources.find(resource => resource.id === resourceId.value))
+const ownerLabel = computed(() => {
+  const resource = selectedResource.value
+  if (!resource) return ''
+  if (resource.scope === 'organization') return '本组织'
+  if (isOwnResource(resource)) return `${platform.currentUser.name}（我）`
+  return platform.users.find(user => user.id === resource.ownerId)?.name ?? '其他成员'
+})
+const accessLabel = computed(() => {
+  const resource = selectedResource.value
+  if (!resource) return ''
+  if (canEdit(resource)) return '归我所有，可编辑'
+  if (isOwnResource(resource)) return '归我所有，已共享'
+  return '已获共享使用权'
+})
+const reason = computed(() => resourceUnavailableReason(selectedResource.value))
+const dependencies = computed(() => {
+  const id = selectedResource.value?.id
+  if (!id) return []
+  return [
+    ...platform.visibleAssistants
+      .filter(assistant => assistant.resourceIds.includes(id))
+      .map(assistant => ({
+        id: assistant.id,
+        name: assistant.name,
+        kind: '助理',
+        to: platform.myAssistants.some(item => item.id === assistant.id)
+          ? { path: '/work/assistants', query: { configure: assistant.id } }
+          : { path: '/work/assistants', query: { scope: 'shared' } },
+      })),
+    ...platform.visibleEmployees
+      .filter(employee => employee.resourceIds.includes(id))
+      .map(employee => ({
+        id: employee.id,
+        name: employee.name,
+        kind: 'AI 员工',
+        to: { name: 'employee-contact', params: { id: employee.id } },
+      })),
+  ]
+})
 
+const scopedResources = computed(() => platform.visibleResources.filter(resource =>
+  (!typeFilter.value || resource.type === typeFilter.value) &&
+  (scopeFilter.value === 'all' || (scopeFilter.value === 'own' ? isOwnResource(resource) : !isOwnResource(resource))),
+))
 const visible = computed(() => {
   const term = search.value.trim().toLowerCase()
-  return platform.visibleResources.filter((resource) =>
-    (!typeFilter.value || resource.type === typeFilter.value) &&
-    (scopeFilter.value === 'all' || resource.scope === scopeFilter.value) &&
-    (!term || (resource.name + ' ' + resource.description).toLowerCase().includes(term)),
+  return scopedResources.value.filter(resource =>
+    !term || (resource.name + ' ' + resource.description).toLowerCase().includes(term),
   )
 })
 const title = computed(() => detailMode.value ? '资源详情' : resourceId.value ? '编辑个人资源' : '添加个人资源')
+const emptyMessage = computed(() => {
+  if (search.value.trim()) return '没有符合搜索条件的资源'
+  if (scopeFilter.value === 'own') return '你还没有添加此类资源'
+  if (scopeFilter.value === 'shared') return '暂无共享的此类资源'
+  return '暂无可查看的此类资源'
+})
 
 watch(() => platform.currentUser.id, () => {
   dialogOpen.value = false
-  typeFilter.value = ''
-  scopeFilter.value = 'all'
-  search.value = ''
 })
 
+function scopeLocation(scope: ResourceScopeFilter) {
+  return resourceLibraryLocation({ ...route.query, scope }, typeFilter.value)
+}
+
+function isOwnResource(resource: Resource) {
+  return resource.scope !== 'organization' && resource.ownerId === platform.currentUser.id
+}
+
 function canEdit(resource: Resource) {
-  return resource.scope === 'personal' && resource.ownerId === platform.currentUser.id
+  return resource.scope === 'personal' && isOwnResource(resource)
 }
 
 function source(resource: Resource) {
   if (resource.scope === 'personal') return '个人资源'
   if (resource.scope === 'organization') return '组织共享'
+  if (isOwnResource(resource)) return '个人资源 · 已共享'
   const owner = platform.users.find((user) => user.id === resource.ownerId)
   return owner ? owner.name + '共享' : '成员共享'
 }
@@ -63,7 +124,7 @@ function open(resource?: Resource) {
   resourceId.value = resource?.id ?? ''
   name.value = resource?.name ?? ''
   description.value = resource?.description ?? ''
-  resourceType.value = resource?.type ?? (typeFilter.value || '知识')
+  resourceType.value = resource?.type ?? typeFilter.value ?? '知识'
   resourceStatus.value = resource?.status ?? '可用'
   dialogOpen.value = true
 }
@@ -90,48 +151,47 @@ function save() {
       ownerId: platform.currentUser.id,
       allowedUserIds: [platform.currentUser.id],
     })
-    scopeFilter.value = 'all'
-    typeFilter.value = ''
-    search.value = ''
+    void router.replace(resourceLibraryLocation({
+      ...route.query,
+      scope: scopeFilter.value === 'shared' ? 'own' : scopeFilter.value,
+      q: null,
+    }, resourceType.value))
   }
   dialogOpen.value = false
   ElMessage.success(resource ? '资源已更新' : '已添加个人资源')
 }
 
-function resetFilters() {
-  search.value = ''
-  typeFilter.value = ''
-  scopeFilter.value = 'all'
-}
 </script>
 
 <template>
-  <div class="page resources-page">
-    <header class="page-header">
-      <div><h1>资源库</h1><p class="muted">管理个人资源，查看组织和其他成员共享给你的能力。</p></div>
-      <div class="resource-header-actions">
-        <RouterLink v-if="canDevelop" class="el-button" :to="{ name: 'resource-management' }">组织资源维护</RouterLink>
-        <el-button type="primary" :icon="Plus" @click="open()">添加资源</el-button>
+  <section class="page-surface resources-page" :aria-label="typeFilter ?? '资源库'">
+    <header class="page-controls">
+      <nav class="page-tabs" aria-label="资源来源">
+        <RouterLink
+          v-for="item in scopes"
+          :key="item.value"
+          :to="scopeLocation(item.value)"
+          custom
+          v-slot="{ href, navigate }"
+        >
+          <a class="page-tab" :href="href" :aria-current="scopeFilter === item.value ? 'page' : undefined" @click="navigate">{{ item.label }}</a>
+        </RouterLink>
+      </nav>
+      <div class="page-toolbar page-tab-toolbar resource-toolbar">
+        <div class="page-toolbar-filters">
+          <el-input v-model="search" :prefix-icon="Search" class="resource-search" placeholder="搜索" aria-label="搜索资源" clearable />
+        </div>
+        <div class="page-toolbar-controls">
+          <RouterLink v-if="canDevelop" class="el-button" :to="{ name: 'resource-management' }">组织资源维护</RouterLink>
+          <el-button type="primary" :icon="Plus" @click="open()">添加资源</el-button>
+        </div>
       </div>
     </header>
 
-    <div class="resource-filters">
-      <div class="type-filters" aria-label="按资源类型筛选">
-        <button type="button" :aria-pressed="typeFilter === ''" @click="typeFilter = ''">全部</button>
-        <button v-for="type in types" :key="type" type="button" :aria-pressed="typeFilter === type" @click="typeFilter = type">{{ type }}</button>
-      </div>
-      <div class="search-filters">
-        <el-select v-model="scopeFilter" class="source-select" aria-label="按来源筛选">
-          <el-option v-for="item in scopes" :key="item.value" :value="item.value" :label="item.label" />
-        </el-select>
-        <el-input v-model="search" :prefix-icon="Search" class="resource-search" placeholder="搜索资源" aria-label="搜索资源" clearable />
-      </div>
-    </div>
-
-    <div v-if="visible.length" class="resource-grid">
+    <div v-if="visible.length" class="page-body resource-grid">
       <article v-for="resource in visible" :key="resource.id" class="panel resource-card">
         <div class="card-top">
-          <span class="resource-icon" :data-type="resource.type"><el-icon><component :is="icons[resource.type]" /></el-icon></span>
+          <span class="resource-icon" :data-type="resource.type" aria-hidden="true"><component :is="icons.get(resource.type)" :size="19" /></span>
           <el-tag :type="resource.status === '可用' ? 'success' : resource.status === '未连接' ? 'warning' : 'info'" effect="plain" size="small">
             {{ resource.status }}
           </el-tag>
@@ -140,45 +200,62 @@ function resetFilters() {
         <p>{{ resource.description || '暂无资源说明' }}</p>
         <div class="card-footer">
           <span>{{ resource.type }} · {{ source(resource) }}</span>
-          <el-button text :icon="ArrowRight" @click="open(resource)">{{ canEdit(resource) ? '编辑' : '详情' }}</el-button>
+          <el-button text :icon="ArrowRight" :aria-label="'查看资源 ' + resource.name" @click="open(resource)">
+            {{ canEdit(resource) ? '编辑' : '详情' }}
+          </el-button>
         </div>
       </article>
     </div>
-    <div v-else class="panel empty">
+    <div v-else class="empty">
       <el-icon><Collection /></el-icon>
-      <p>{{ search || typeFilter || scopeFilter !== 'all' ? '没有符合筛选条件的资源' : '当前没有可查看的资源' }}</p>
-      <el-button v-if="search || typeFilter || scopeFilter !== 'all'" @click="resetFilters">清除筛选</el-button>
-      <el-button v-else :icon="Plus" @click="open()">添加资源</el-button>
+      <p>{{ emptyMessage }}</p>
+      <el-button v-if="search.trim()" @click="search = ''">清除搜索</el-button>
+      <el-button v-else-if="scopeFilter !== 'shared'" :icon="Plus" @click="open()">添加资源</el-button>
     </div>
 
     <el-dialog v-model="dialogOpen" :title="title" width="min(540px, calc(100vw - 30px))">
-      <el-form label-position="top" :disabled="detailMode" @submit.prevent="save">
-        <el-form-item label="名称" required><el-input v-model="name" maxlength="60" placeholder="输入资源名称" /></el-form-item>
-        <div class="form-row">
-          <el-form-item label="类型"><el-select v-model="resourceType"><el-option v-for="type in types" :key="type" :value="type" :label="type" /></el-select></el-form-item>
-          <el-form-item label="状态"><el-select v-model="resourceStatus"><el-option v-for="status in statuses" :key="status" :value="status" :label="status" /></el-select></el-form-item>
-        </div>
-        <el-form-item label="用途说明"><el-input v-model="description" type="textarea" :rows="4" maxlength="400" placeholder="说明这项资源能用于哪些工作。" /></el-form-item>
-      </el-form>
+      <div class="resource-dialog-body">
+        <section v-if="selectedResource" class="resource-summary" aria-label="资源来源与授权">
+          <h2 v-if="detailMode">{{ selectedResource.name }}</h2>
+          <dl>
+            <div><dt>来源</dt><dd>{{ ownerLabel }}</dd></div>
+            <div><dt>我的权限</dt><dd>{{ accessLabel }}</dd></div>
+            <div><dt>资源类型</dt><dd>{{ selectedResource.type }}</dd></div>
+            <div><dt>当前状态</dt><dd>{{ selectedResource.status }}</dd></div>
+          </dl>
+          <p v-if="reason" class="resource-unavailable">{{ reason }}</p>
+          <p v-if="detailMode && selectedResource.description" class="muted resource-description">{{ selectedResource.description }}</p>
+        </section>
+        <el-form v-if="!detailMode" label-position="top" @submit.prevent="save">
+          <el-form-item label="名称" required><el-input v-model="name" maxlength="60" placeholder="输入资源名称" /></el-form-item>
+          <div class="form-row">
+            <el-form-item label="类型"><el-select v-model="resourceType"><el-option v-for="type in resourceTypes" :key="type" :value="type" :label="type" /></el-select></el-form-item>
+            <el-form-item label="状态"><el-select v-model="resourceStatus"><el-option v-for="status in statuses" :key="status" :value="status" :label="status" /></el-select></el-form-item>
+          </div>
+          <el-form-item label="用途说明"><el-input v-model="description" type="textarea" :rows="4" maxlength="400" placeholder="说明这项资源能用于哪些工作。" /></el-form-item>
+        </el-form>
+        <section v-if="selectedResource" class="resource-dependencies" aria-label="配置引用">
+          <h3>配置引用</h3>
+          <ul v-if="dependencies.length">
+            <li v-for="item in dependencies" :key="item.kind + item.id">
+              <span>{{ item.kind }}</span>
+              <RouterLink :to="item.to" @click="dialogOpen = false">{{ item.name }}</RouterLink>
+            </li>
+          </ul>
+          <p v-else class="muted">你可查看的助理和 AI 员工中，暂无配置引用。</p>
+        </section>
+      </div>
       <template #footer>
         <el-button @click="dialogOpen = false">{{ detailMode ? '关闭' : '取消' }}</el-button>
         <el-button v-if="!detailMode" type="primary" :disabled="!name.trim()" @click="save">保存资源</el-button>
       </template>
     </el-dialog>
-  </div>
+  </section>
 </template>
 
 <style scoped>
-.resource-header-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.resource-header-actions .el-button { margin-left: 0; }
-.resource-filters, .type-filters, .search-filters { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.resource-filters { justify-content: space-between; margin-bottom: 15px; }
-.type-filters button { border: 1px solid transparent; color: var(--muted); background: transparent; padding: 7px 10px; border-radius: 7px; font: inherit; font-size: 13px; cursor: pointer; }
-.type-filters button[aria-pressed="true"] { color: var(--accent); background: #ecf1ff; border-color: #dfe7ff; font-weight: 600; }
-.type-filters button:hover { color: var(--accent); }
-.source-select { width: 113px; }
-.resource-search { width: 155px; }
-.resource-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 13px; }
+.resource-search { width: 184px; }
+.resource-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(230px, 100%), 1fr)); gap: 13px; }
 .resource-card { display: flex; flex-direction: column; padding: 16px; min-width: 0; }
 .card-top, .card-footer { display: flex; justify-content: space-between; align-items: center; gap: 7px; }
 .resource-icon { display: grid; place-items: center; width: 37px; height: 37px; border-radius: 9px; color: var(--accent); background: #edf2ff; font-size: 17px; }
@@ -194,11 +271,23 @@ function resetFilters() {
 .empty > .el-icon { font-size: 23px; }
 .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .form-row .el-select { width: 100%; }
+.resource-dialog-body { max-height: 65dvh; overflow-y: auto; padding: 0 4px; }
+.resource-summary { border-bottom: 1px solid var(--line); padding-bottom: 12px; margin-bottom: 13px; }
+.resource-summary h2 { margin: 0 0 10px; font-size: 17px; overflow-wrap: anywhere; }
+.resource-summary dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; margin: 0; }
+.resource-summary dl div { min-width: 0; }
+.resource-summary dt { margin-bottom: 3px; color: var(--muted); font-size: 12px; }
+.resource-summary dd { margin: 0; color: var(--text); font-weight: 600; overflow-wrap: anywhere; }
+.resource-unavailable { padding: 7px 9px; border-radius: 6px; background: #fff7e8; color: #815218; }
+.resource-description { margin-bottom: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.resource-dependencies h3 { margin: 0 0 7px; font-size: 14px; }
+.resource-dependencies p { margin: 0; font-size: 13px; }
+.resource-dependencies ul { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.resource-dependencies li { display: flex; align-items: baseline; gap: 8px; }
+.resource-dependencies li span { flex: none; border-radius: 4px; padding: 2px 5px; color: var(--muted); background: var(--soft); font-size: 11px; }
+.resource-dependencies a { color: var(--accent); overflow-wrap: anywhere; }
 @media (max-width: 560px) {
-  .resource-grid { grid-template-columns: 1fr; }
-  .type-filters { gap: 3px; }
-  .type-filters button { padding-inline: 7px; }
-  .search-filters { flex-wrap: nowrap; width: 100%; }
-  .resource-search { flex: 1; min-width: 0; }
+  .resource-search { width: clamp(90px, 32vw, 184px); }
+  .resource-toolbar .el-button { padding-inline: 6px; }
 }
 </style>

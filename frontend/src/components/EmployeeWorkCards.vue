@@ -2,10 +2,12 @@
 import { computed } from 'vue'
 import { ChevronRight, ClipboardList } from 'lucide-vue-next'
 import type { Task } from '@/stores/platform'
+import { scenarioNextStep, scenarioStatusLabels, type ScenarioTask } from '@/stores/scenarioTasks'
 
 const props = withDefaults(defineProps<{
   tasks: Task[]
   employeeId: string
+  scenarioTasks?: ScenarioTask[]
   hideHeading?: boolean
 }>(), { hideHeading: false })
 const emit = defineEmits<{ supplement: [id: string] }>()
@@ -40,7 +42,16 @@ function formatDate(value: string) {
       </RouterLink>
     </header>
 
-    <ul v-if="displayedTasks.length" class="work-card-list">
+    <ul v-if="displayedTasks.length || scenarioTasks?.length" class="work-card-list">
+      <li v-for="task in scenarioTasks" :key="task.id" class="work-card" :class="task.status === 'completed' ? 'done' : task.status === 'running' ? 'running' : 'waiting'">
+        <div class="work-card-heading"><h3>{{ task.title }}</h3><span class="work-card-status">{{ scenarioStatusLabels[task.status] }}</span></div>
+        <p class="work-card-detail">{{ scenarioNextStep(task) }}</p>
+        <time class="work-card-date" :datetime="task.updatedAt">{{ formatDate(task.updatedAt) }}</time>
+        <div class="work-card-actions">
+          <RouterLink class="work-card-link" :to="{ name: 'scenario-task', params: { taskId: task.id }, query: { ...employeeQuery, from: 'assigned' } }"
+            :aria-label="'查看任务：' + task.title">查看任务</RouterLink>
+        </div>
+      </li>
       <li v-for="task in displayedTasks" :key="task.id" class="work-card" :class="statuses[task.status].tone">
         <div class="work-card-heading">
           <h3>{{ task.title }}</h3>

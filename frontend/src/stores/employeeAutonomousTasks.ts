@@ -37,6 +37,9 @@ export interface EmployeeAutonomousRuleDraft {
   conditionKeyword: string
   ownerId: string
   enabled: boolean
+  work?: string
+  delivery?: string
+  handoff?: string
 }
 
 export interface EmployeeAutonomousRule extends EmployeeAutonomousRuleDraft {
@@ -50,6 +53,7 @@ interface SimulatedAutonomousTask extends EmployeeAutonomousTask {
   eventType: AutonomousEventType
   eventText: string
   completesAt: number
+  plan?: string[]
 }
 
 interface AutonomousTaskState {
@@ -190,6 +194,13 @@ const useAutonomousTaskStore = defineStore('employee-autonomous-tasks', () => {
     return platform.users.some(user => user.id === ownerId && user.status !== 'disabled')
   }
 
+  function matchingRules(employeeId: string, eventType: AutonomousEventType, description: string) {
+    const comparable = description.toLowerCase()
+    return state.value.rules.filter(rule => rule.employeeId === employeeId
+      && rule.enabled && rule.eventType === eventType
+      && comparable.includes(rule.conditionKeyword.toLowerCase()) && hasActiveOwner(rule.ownerId))
+  }
+
   function commit(next: AutonomousTaskState) {
     state.value = next
     try {
@@ -230,6 +241,9 @@ const useAutonomousTaskStore = defineStore('employee-autonomous-tasks', () => {
       conditionKeyword,
       ownerId: draft.ownerId,
       enabled: draft.enabled,
+      work: draft.work?.trim() || undefined,
+      delivery: draft.delivery?.trim() || undefined,
+      handoff: draft.handoff?.trim() || undefined,
     }
     const nextRules = existing
       ? state.value.rules.map(item => item.id === rule.id ? rule : item)
@@ -253,7 +267,11 @@ const useAutonomousTaskStore = defineStore('employee-autonomous-tasks', () => {
           progress: 100,
           summary: '已完成模拟处理。',
           updatedAt: new Date(task.completesAt).toISOString(),
-          result: `已按「${task.ruleName}」处理「${autonomousEventTypeLabels[task.eventType]}」测试事件。\n事件内容：${task.eventText}`,
+          result: [
+            `已按「${task.ruleName}」处理「${autonomousEventTypeLabels[task.eventType]}」测试事件。`,
+            `事件内容：${task.eventText}`,
+            ...(task.plan ?? []),
+          ].join('\n'),
         }
       })
       commit({ ...state.value, simulations })
@@ -269,10 +287,7 @@ const useAutonomousTaskStore = defineStore('employee-autonomous-tasks', () => {
     if (!canConfigureEmployee(employeeId) || !Object.hasOwn(autonomousEventTypeLabels, eventType)) return []
     const description = eventText.trim()
     if (!description) return []
-    const comparable = description.toLowerCase()
-    const matched = state.value.rules.filter(rule => rule.employeeId === employeeId
-      && rule.enabled && rule.eventType === eventType
-      && comparable.includes(rule.conditionKeyword.toLowerCase()) && hasActiveOwner(rule.ownerId))
+    const matched = matchingRules(employeeId, eventType, description)
     if (!matched.length) return []
 
     const startedAt = Date.now()
@@ -292,6 +307,11 @@ const useAutonomousTaskStore = defineStore('employee-autonomous-tasks', () => {
       eventType,
       eventText: description,
       completesAt: startedAt + simulatedRunDuration,
+      plan: [
+        rule.work && `模拟工作：${rule.work}`,
+        rule.delivery && `预期交付：${rule.delivery}`,
+        rule.handoff && `人工接手条件：${rule.handoff}`,
+      ].filter((line): line is string => !!line),
     }))
     commit({ ...state.value, simulations: [...state.value.simulations, ...simulations] })
     finishPendingRuns()
@@ -303,11 +323,11 @@ const useAutonomousTaskStore = defineStore('employee-autonomous-tasks', () => {
     if (completionTimer !== undefined) clearTimeout(completionTimer)
   })
 
-  return { visibleTasks, rules, simulationTasks, saveRule, simulateEvent }
+  return { visibleTasks, rules, simulationTasks, saveRule, simulateEvent, matchingRules }
 })
 
 export function useEmployeeAutonomousTasks() {
   const store = useAutonomousTaskStore()
   const { visibleTasks, rules, simulationTasks } = storeToRefs(store)
-  return { visibleTasks, rules, simulationTasks, saveRule: store.saveRule, simulateEvent: store.simulateEvent }
+  return { visibleTasks, rules, simulationTasks, saveRule: store.saveRule, simulateEvent: store.simulateEvent, matchingRules: store.matchingRules }
 }

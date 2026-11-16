@@ -1,13 +1,19 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, shallowRef } from 'vue'
-import { CircleAlert, Download, FileBox, Send, Sparkles } from 'lucide-vue-next'
-import { ElMessage } from 'element-plus'
+import { computed, nextTick, ref, shallowRef, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { CircleAlert, CircleCheck, ClipboardCheck, Download, FileBox, FolderOpen, Send, Sparkles } from 'lucide-vue-next'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { usePlatformStore, type WorkspaceFile } from '@/stores/platform'
+import { ET_DESIGN_WORKBENCH_ID } from '@/stores/sample'
+import { useEtDrawingReviewStore } from '@/stores/etDrawingReview'
+import { etReviewId, etReviewTitle, useScenarioTaskStore } from '@/stores/scenarioTasks'
 import { useWorkbenchAssistant } from '@/workbenchAssistant'
 import WorkbenchAssistantSelect from '@/components/WorkbenchAssistantSelect.vue'
 import ConversationFileTree from './ConversationFileTree.vue'
 import EtDrawingCanvas from './EtDrawingCanvas.vue'
+import EtReviewWorkspace from './EtReviewWorkspace.vue'
 import { drawingSvg, getBounds, parseDrawing, sampleDxf, type DrawingEntity } from './etDrawing'
+import { getReviewFindings, reviewDrawingName, reviewDrawingSource, type EtReviewVersion } from './etReviewDrawing'
 
 const tabs = [
   { id: 'export', label: '格式转换' },
@@ -23,14 +29,20 @@ const questions = ['概览当前图纸', '查看图层和实体', '生成出图�
 const fallbackAssistant = '图纸助理'
 type Tab = typeof tabs[number]['id']
 type Format = typeof formats[number]['id']
-type Drawing = ReturnType<typeof parseDrawing> & { name: string, file: Blob }
+type Drawing = ReturnType<typeof parseDrawing> & { name: string, file: Blob, reviewVersion?: EtReviewVersion }
 
 const platform = usePlatformStore()
+const route = useRoute()
+const router = useRouter()
+const review = useEtDrawingReviewStore()
+const scenarioTasks = useScenarioTaskStore()
 const { assistant } = useWorkbenchAssistant()
 const tab = ref<Tab>('export')
 const input = ref<HTMLInputElement>()
 const workspacePickerOpen = ref(false)
+const sharedWorkspaceOpen = ref(false)
 const chatLog = ref<HTMLElement>()
+const canvas = ref<InstanceType<typeof EtDrawingCanvas>>()
 const drawing = shallowRef<Drawing>()
 const selection = shallowRef<DrawingEntity[]>([])
 const loading = ref(false)
@@ -38,6 +50,21 @@ const importError = ref('')
 const question = ref('')
 const messages = ref<{ question: string; answer: string; assistantName: string }[]>([])
 let importRevision = 0
+
+const reviewLocation = { name: 'workbench', params: { id: ET_DESIGN_WORKBENCH_ID }, query: { review: etReviewId } }
+const reviewOpen = computed(() => review.hasWorkspaceAccess && route.name === 'workbench' && route.query.review === etReviewId)
+const routeVersion = computed<EtReviewVersion>(() => route.query.version === 'V1' ? 'V1' : 'V2')
+const reviewVersion = computed(() => reviewOpen.value ? drawing.value?.reviewVersion : undefined)
+const reviewDraft = computed(() => reviewVersion.value ? review.draftFor(reviewVersion.value) : undefined)
+const canConfirmChecklist = computed(() => !!reviewDraft.value?.findings.length
+  && reviewDraft.value.findings.every(finding => !!finding.conclusion.trim()))
+const canRequestReview = computed(() => platform.visibleEmployees.some(employee => employee.id === 'employee-design'))
+const visibleQuestions = computed(() => reviewVersion.value ? questions.slice(0, -1) : questions)
+const latestDelivery = computed(() => reviewOpen.value
+  ? scenarioTasks.tasksForObject('et-review', etReviewId)
+    .filter(task => task.writtenAt)
+    .sort((left, right) => (right.writtenAt ?? '').localeCompare(left.writtenAt ?? ''))[0]
+  : undefined)
 
 const layers = computed(() => {
   const counts = new Map<string, number>()
@@ -86,6 +113,108 @@ function openSample() {
   const source = sampleDxf()
   setDrawing({ ...parseDrawing(source), name: '设备安装底板.dxf', file: new Blob([source], { type: 'application/dxf' }) })
 }
+
+function openReviewVersion(version: EtReviewVersion) {
+  if (!reviewOpen.value) return
+  closeDrawing()
+  const source = reviewDrawingSource(version)
+  setDrawing({ ...parseDrawing(source), name: reviewDrawingName(version), file: new Blob([source], { type: 'application/dxf' }), reviewVersion: version })
+  tab.value = 'ask'
+}
+
+function selectReviewVersion(version: EtReviewVersion) {
+  if (routeVersion.value !== version) {
+    return router.replace({ ...reviewLocation, query: { ...reviewLocation.query, version: version === 'V1' ? version : undefined } })
+  }
+  if (reviewVersion.value !== version) openReviewVersion(version)
+}
+
+function makeChecklist() {
+  const current = drawing.value
+  const version = reviewVersion.value
+  if (!current || !version || !review.canEdit || reviewDraft.value) return
+  review.setDraft({
+    version,
+    scope: selection.value.length ? `框选 ${selection.value.length} 个实体` : '整张图纸',
+    assistantName: assistant.value?.name ?? fallbackAssistant,
+    findings: getReviewFindings(current.entities, selection.value),
+  })
+}
+
+function editConclusion(index: number, event: Event) {
+  const draft = reviewDraft.value
+  if (!draft) return
+  const conclusion = (event.target as HTMLTextAreaElement).value
+  review.setDraft({ ...draft, findings: draft.findings.map((finding, item) => item === index ? { ...finding, conclusion } : finding) })
+}
+
+function revealEvidence(indices: number[]) {
+  if (!drawing.value) return
+  selection.value = indices.flatMap(index => drawing.value?.entities[index] ?? [])
+  canvas.value?.revealSelection()
+}
+
+async function openSharedVersion(version: EtReviewVersion, indices?: number[]) {
+  sharedWorkspaceOpen.value = false
+  await selectReviewVersion(version)
+  if (!indices?.length) return
+  await nextTick()
+  revealEvidence(indices)
+}
+
+function confirmChecklist() {
+  if (!reviewVersion.value || !review.confirmDraft(reviewVersion.value)) return
+  ElMessage.success(`检查清单已保存到 ${etReviewId} 共享工作空间`)
+}
+
+async function discardChecklist() {
+  const version = reviewVersion.value
+  if (!version) return
+  try {
+    await ElMessageBox.confirm('清除后可按当前选区重新生成清单。', '清除检查清单草稿？', { confirmButtonText: '清除草稿', cancelButtonText: '继续编辑', type: 'warning' })
+  } catch {
+    return
+  }
+  review.clearDraft(version)
+}
+
+function publishReview() {
+  if (!review.canPublish || reviewVersion.value !== 'V2') return
+  const checklist = review.confirmed.find(item => item.version === 'V2')
+  if (!checklist) return
+  const task = scenarioTasks.createEventTask({
+    scenarioId: 'et-review', objectId: etReviewId, objectTitle: etReviewTitle, objectVersion: 'V2',
+    triggerKey: `et-review:${etReviewId}:V2`,
+    evidence: [
+      { label: '电气图纸 V2', detail: '接线路径和线缆标记更新，见图纸 WIRING、CABLE_TAGS 图层。' },
+      { label: '材料清单 V1', detail: '共享空间中的材料清单仍为 V1，待核对 V2 变更。' },
+      { label: '已确认的检查清单', detail: `${checklist.authorName}已确认 ${checklist.findings.length} 项，范围为${checklist.scope}。` },
+    ],
+  })
+  if (!task) {
+    ElMessage.warning('未能触发图纸核对任务，请检查员工的启用状态和工作规则后重试。')
+    return
+  }
+  review.publish(task.id)
+  ElMessage.success('V2 已发布，并登记了图纸核对任务')
+}
+
+watch([reviewOpen, routeVersion], ([active, version], previous) => {
+  if (active) openReviewVersion(version)
+  else if (previous?.[0]) {
+    closeDrawing()
+    sharedWorkspaceOpen.value = false
+    tab.value = 'export'
+  }
+}, { immediate: true })
+
+watch([reviewVersion, () => route.query.evidence], async ([version, evidence]) => {
+  if (!version || typeof evidence !== 'string' || evidence.length > 500 || !/^\d+(,\d+)*$/.test(evidence)) return
+  await nextTick()
+  if (reviewVersion.value === version && route.query.evidence === evidence) {
+    revealEvidence(evidence.split(',').map(Number))
+  }
+}, { immediate: true })
 
 function isDxf(name: string) {
   return /\.dxf$/i.test(name)
@@ -198,7 +327,12 @@ async function askDrawing(text = question.value) {
   const counts = (items: Map<string, number>) => [...items].map(([label, count]) => `${label}（${count}）`).join('、')
   let answer = `《${current.name}》的${scope}包含 ${entities.length} 个实体，分布于 ${entityLayers.size} 个图层。\n实体类型：${counts(entityTypes)}。\n范围宽高约为 ${describeSize(entities)}。`
   if (/检查|交付|出图/.test(prompt)) {
-    answer = `根据《${current.name}》的${scope}整理出图检查项。\n\n1. 核对 ${entityLayers.size} 个图层的命名、可见性与打印设置。\n2. 对照原图复核关键尺寸、单位、标注和版本号。\n3. 按交付要求导出 DXF、HTML 或 SVG，并重新打开文件复核内容。`
+    if (reviewVersion.value && review.canEdit) {
+      makeChecklist()
+      answer = `检查清单草稿可在上方查看。请结合图层依据核对，再确认保存到 ${etReviewId}。`
+    } else {
+      answer = `根据《${current.name}》的${scope}整理出图检查项。\n\n1. 核对 ${entityLayers.size} 个图层的命名、可见性与打印设置。\n2. 对照原图复核关键尺寸、单位、标注和版本号。\n3. 按交付要求导出 DXF、HTML 或 SVG，并重新打开文件复核内容。`
+    }
   } else if (/图层|实体/.test(prompt)) {
     answer = `《${current.name}》的${scope}共有 ${entities.length} 个实体。\n图层：${counts(entityLayers)}。\n实体类型：${counts(entityTypes)}。`
   } else if (!/概览|范围|宽|高|尺寸|数量|多少/.test(prompt)) {
@@ -214,9 +348,47 @@ async function askDrawing(text = question.value) {
 <template>
   <div class="et-workbench">
     <input ref="input" type="file" accept=".dxf,.dwg" hidden @change="handleFileInput" />
+    <section v-if="review.hasWorkspaceAccess" class="et-review-head page-toolbar page-tab-toolbar" aria-label="图纸评审记录">
+      <div class="et-review-context">
+        <div class="et-review-heading">
+          <ClipboardCheck :size="18" aria-hidden="true" />
+          <div><h2>{{ etReviewTitle }}</h2><span>{{ etReviewId }}</span></div>
+        </div>
+        <div v-if="reviewOpen" class="et-review-versions" role="group" aria-label="图纸版本">
+          <button type="button" class="et-review-version" :aria-pressed="reviewVersion === 'V1'" @click="selectReviewVersion('V1')">V1 <small>{{ review.release ? '上一版' : '已发布' }}</small></button>
+          <button type="button" class="et-review-version" :aria-pressed="reviewVersion === 'V2'" @click="selectReviewVersion('V2')">V2 <small>{{ review.release ? '已发布' : '待发布' }}</small></button>
+        </div>
+      </div>
+      <div class="page-toolbar-controls">
+        <RouterLink v-if="!reviewOpen" :to="reviewLocation" class="et-review-primary">打开图纸评审</RouterLink>
+        <template v-else>
+          <RouterLink :to="{ name: 'workbench', params: { id: ET_DESIGN_WORKBENCH_ID } }" class="et-review-text">退出评审</RouterLink>
+          <button type="button" class="et-review-button" @click="sharedWorkspaceOpen = true"><FolderOpen :size="15" aria-hidden="true" />共享工作空间</button>
+          <RouterLink
+            v-if="canRequestReview && reviewVersion"
+            :to="{ name: 'employee-contact', params: { id: 'employee-design' }, query: { mode: 'task', review: etReviewId, version: reviewVersion } }"
+            class="et-review-text"
+          >交办核对</RouterLink>
+          <template v-if="review.release">
+            <button type="button" class="et-review-button" @click="sharedWorkspaceOpen = true">查看发布与交付</button>
+          </template>
+          <template v-else-if="review.canEdit">
+            <span v-if="!review.canPublish" class="et-review-publish-hint">确认并保存 V2 清单后可发布</span>
+            <button type="button" class="et-review-primary" :disabled="!review.canPublish || reviewVersion !== 'V2'" @click="publishReview">发布 V2</button>
+          </template>
+          <span v-if="!review.canEdit" class="et-review-publish-hint">仅查看</span>
+        </template>
+      </div>
+    </section>
+    <div v-if="latestDelivery" class="et-review-result" aria-label="最近写回的结论">
+      <CircleCheck :size="15" aria-hidden="true" />
+      <strong>{{ latestDelivery.objectVersion }} 已写回</strong>
+      <p :title="latestDelivery.result">{{ latestDelivery.result }}</p>
+    </div>
     <p v-if="importError" class="notice import-error" role="alert"><CircleAlert :size="17" />{{ importError }}</p>
-    <div class="et-layout">
+    <div class="et-layout page-body" :class="{ 'review-layout': reviewOpen, 'with-delivery': latestDelivery }">
       <EtDrawingCanvas
+        ref="canvas"
         :drawing="drawing"
         :selection="selection"
         :loading="loading"
@@ -289,10 +461,31 @@ async function askDrawing(text = question.value) {
           </div>
           <div v-if="drawing" class="drawing-context">
             <FileBox :size="16" aria-hidden="true" />
-            <span :title="drawing.name">{{ drawing.name }}</span>
+            <span :title="drawing.name">{{ reviewVersion ? `${etReviewId} · ${reviewVersion}` : drawing.name }}</span>
             <strong>{{ selection.length ? `框选 ${selection.length} 个` : '整张图纸' }}</strong>
           </div>
           <p v-if="drawing?.skipped" class="format-detail">问图统计仅覆盖当前可预览的实体。</p>
+          <section v-if="reviewVersion && review.canEdit" class="et-checklist" aria-label="出图检查清单">
+            <div class="et-checklist-header">
+              <h3>出图检查清单</h3>
+              <button v-if="!reviewDraft" type="button" class="et-review-button" @click="makeChecklist">生成检查清单</button>
+              <button v-else type="button" class="et-review-text" @click="discardChecklist">清除草稿</button>
+            </div>
+            <template v-if="reviewDraft">
+              <p class="et-checklist-meta">{{ reviewDraft.assistantName }} · {{ reviewDraft.scope }} · 个人草稿</p>
+              <ol class="et-checklist-findings">
+                <li v-for="(finding, index) in reviewDraft.findings" :key="finding.layer">
+                  <div class="et-checklist-evidence">
+                    <strong>{{ finding.layer }}</strong>
+                    <button type="button" class="et-review-text" :aria-label="`定位图纸依据：${finding.layer}`" @click="revealEvidence(finding.entityIndices)">定位依据</button>
+                  </div>
+                  <small>{{ finding.evidence }}</small>
+                  <textarea :aria-label="`${finding.layer} 检查结论`" :value="finding.conclusion" rows="2" maxlength="500" @input="editConclusion(index, $event)"></textarea>
+                </li>
+              </ol>
+              <button type="button" class="et-review-primary" :disabled="!canConfirmChecklist" @click="confirmChecklist">确认并保存到 {{ etReviewId }}</button>
+            </template>
+          </section>
           <div ref="chatLog" class="chat-log" role="log" aria-label="问图记录" aria-live="polite">
             <p v-if="!messages.length" class="chat-welcome">{{ drawing ? '可以询问图层、实体和图纸范围。框选后，我会按所选实体回答。' : '打开图纸后，可以针对整张图纸或框选区域提问。' }}</p>
             <template v-for="(message, index) in messages" :key="index">
@@ -301,7 +494,7 @@ async function askDrawing(text = question.value) {
             </template>
           </div>
           <div class="quick-questions">
-            <button v-for="item in questions" :key="item" type="button" :disabled="!drawing" @click="askDrawing(item)">{{ item }}</button>
+            <button v-for="item in visibleQuestions" :key="item" type="button" :disabled="!drawing" @click="askDrawing(item)">{{ item }}</button>
           </div>
           <form class="ask-form" @submit.prevent="askDrawing()">
             <input v-model="question" type="text" aria-label="图纸问题" placeholder="输入图纸问题" maxlength="200" :disabled="!drawing" />
@@ -310,6 +503,7 @@ async function askDrawing(text = question.value) {
         </section>
       </aside>
     </div>
+    <EtReviewWorkspace v-if="reviewOpen" v-model:open="sharedWorkspaceOpen" @open-version="openSharedVersion" />
     <el-dialog
       v-model="workspacePickerOpen"
       title="选择工作空间文件"
@@ -332,8 +526,40 @@ async function askDrawing(text = question.value) {
 <style scoped>
 .workspace-picker-hint { margin: 0 0 10px; color: var(--muted); font-size: 13px; }
 .workspace-picker-files { max-height: 50vh; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
-.et-workbench { container-type: inline-size; }
-.et-layout { display: grid; grid-template-columns: minmax(0, 1.95fr) minmax(300px, 1fr); gap: 12px; height: max(540px, calc(100dvh - 112px)); padding: 8px; border: 1px solid #e3e7f0; border-radius: 16px; background: #eef1f6; }
+.et-workbench { container-type: inline-size; --et-record-height: 0px; }
+.et-workbench:has(.et-review-head) { --et-record-height: 61px; }
+.et-layout { display: grid; grid-template-columns: minmax(0, 1.95fr) minmax(300px, 1fr); gap: 12px; height: max(490px, calc(var(--shell-body-height, 100dvh) - 112px - var(--et-record-height))); }
+.et-layout.with-delivery { --et-record-height: 98px; }
+.et-review-head { border-bottom: 1px solid var(--line); }
+.et-review-context, .et-review-versions { display: flex; align-items: center; flex-wrap: wrap; min-width: 0; gap: 6px; }
+.et-review-context { column-gap: 10px; }
+.et-review-heading { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.et-review-heading svg { flex: none; color: var(--accent); }
+.et-review-heading h2 { margin: 0; color: var(--text); font-size: 14px; font-weight: 675; overflow-wrap: anywhere; }
+.et-review-heading span, .et-review-publish-hint { color: var(--muted); font-size: 11px; }
+.et-review-button, .et-review-primary, .et-review-version { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 31px; padding: 4px 9px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface); color: #435575; font-size: 12px; font-weight: 620; }
+.et-review-primary { border-color: var(--accent); background: var(--accent); color: #fff; }
+.et-review-primary:hover:not(:disabled) { background: var(--accent-hover); }
+.et-review-primary:disabled { border-color: #e1e7f3; background: #e9edf6; color: #68768e; }
+.et-review-button:hover, .et-review-version:hover, .et-review-version[aria-pressed="true"] { border-color: #c6d4f5; background: var(--soft); color: var(--accent); }
+.et-review-version small { color: var(--muted); font-size: 10px; font-weight: 550; }
+.et-review-text { padding: 3px 0; border: 0; background: transparent; color: var(--accent); font-size: 12px; font-weight: 630; white-space: nowrap; }
+.et-review-text:hover { text-decoration: underline; }
+.et-review-result { display: flex; align-items: center; gap: 6px; min-width: 0; margin: 8px 12px 0; padding: 7px 9px; border: 1px solid #d6ebdc; border-radius: 7px; background: #f0f8f2; color: #2b6748; font-size: 12px; }
+.et-review-result svg, .et-review-result strong { flex: none; }
+.et-review-result p { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.et-checklist { display: grid; flex: none; align-items: start; gap: 7px; margin-top: 12px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; }
+.et-checklist-header, .et-checklist-evidence { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.et-checklist-header h3 { margin: 0; font-size: 13px; }
+.et-checklist-meta { margin: 0; color: var(--muted); font-size: 11px; }
+.et-checklist-findings { display: grid; gap: 8px; max-height: 240px; margin: 0; padding: 0 4px 0 0; list-style: none; overflow: auto; }
+.et-checklist-findings li { display: grid; gap: 3px; padding: 6px 0; }
+.et-checklist-findings li + li { border-top: 1px solid var(--line); }
+.et-checklist-findings strong { font-size: 12px; overflow-wrap: anywhere; }
+.et-checklist-findings small { color: var(--muted); font-size: 11px; }
+.et-checklist-findings textarea { width: 100%; min-width: 0; padding: 6px 7px; border: 1px solid var(--line); border-radius: 6px; background: var(--canvas); color: var(--text); font: inherit; font-size: 12px; line-height: 1.5; resize: vertical; }
+.et-checklist > .et-review-primary { justify-self: start; }
+.review-layout .chat-log { min-height: 50px; }
 .drawing-tools { display: flex; flex-direction: column; min-width: 0; min-height: 0; border: 1px solid #e8ecf4; border-radius: 13px; background: #fff; overflow: hidden; }
 .tool-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); flex: none; background: #eaf0fc; }
 .tool-tabs button { position: relative; min-height: 48px; padding: 8px 3px; border: 0; border-radius: 10px 10px 0 0; background: transparent; color: #596780; font-weight: 650; white-space: nowrap; }
@@ -356,7 +582,7 @@ async function askDrawing(text = question.value) {
 .format-card:disabled .format-icon { background: #7687b8; }
 .notice { display: flex; align-items: flex-start; gap: 7px; margin: 16px 0 0; padding: 10px; border-radius: 8px; background: #fff5df; color: #835014; font-size: 12px; line-height: 1.55; }
 .notice svg { flex: none; }
-.import-error { margin: 0 0 8px; }
+.import-error { margin: 8px 12px 0; }
 .format-detail { margin: 12px 0 0; color: #67748c; font-size: 12px; line-height: 1.65; }
 .tool-heading { margin: 0 0 12px; font-size: 15px; font-weight: 680; }
 .drawing-stats { display: grid; gap: 10px; margin: 0; font-size: 13px; }
@@ -397,6 +623,10 @@ async function askDrawing(text = question.value) {
   .et-layout > :first-child { min-height: 350px; }
   .tool-content { padding: 16px 12px; }
   .chat-log { max-height: 300px; }
+}
+@container (min-width: 681px) and (max-width: 850px) {
+  .et-layout.review-layout { --et-record-height: 93px; }
+  .et-layout.with-delivery { --et-record-height: 130px; }
 }
 @container (max-width: 325px) {
   .format-card { padding: 9px; gap: 8px; }

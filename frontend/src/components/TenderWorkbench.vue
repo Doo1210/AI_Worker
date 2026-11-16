@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ClipboardCheck, Download, FileSearch, ListFilter, Printer, Search, Sparkles, Undo2 } from 'lucide-vue-next'
+import { ArrowUpRight, CalendarClock, ClipboardCheck, Download, FileSearch, ListFilter, Printer, Search, Sparkles, Undo2 } from 'lucide-vue-next'
 import WorkbenchAssistantSelect from '@/components/WorkbenchAssistantSelect.vue'
+import { scenarioNextStep, scenarioStatusLabels, useScenarioTaskStore } from '@/stores/scenarioTasks'
 import { useWorkbenchAssistant } from '@/workbenchAssistant'
 import {
   findOpportunities, opportunities, screenOpportunity, tenderAnalysis, tenderCategories,
@@ -10,6 +12,9 @@ import {
 } from '@/stores/tenderSample'
 
 const props = defineProps<{ userId: string }>()
+const route = useRoute()
+const router = useRouter()
+const scenario = useScenarioTaskStore()
 const { assistant } = useWorkbenchAssistant()
 const assistantFallback = '招投标助理'
 const stages = [
@@ -52,8 +57,14 @@ const draftDecision = ref<Review['decision'] | ''>('')
 const draftNote = ref('')
 const undo = ref<{ id: string; previous?: Review }>()
 const report = ref<{ created: string; pending: number; reviewed: number; rows: string[][] }>()
+const scheduledRules: TenderRules = { minBudget: 100, exclude: '维保' }
 const regions = [...new Set(opportunities.map(item => item.region))]
 const records = computed(() => findOpportunities(task.value.query))
+const linkedOpportunity = computed(() => opportunities.find(item => item.id === route.query.opportunity))
+const linkedOutsideQuery = computed(() => {
+  const linked = linkedOpportunity.value
+  return linked && !records.value.some(item => item.id === linked.id) ? linked : undefined
+})
 const activeRules = computed(() => stage.value === 'rules' && previewRules.value ? previewRules.value : task.value.rules)
 const screened = computed(() => records.value.map(item => ({
   item,
@@ -72,10 +83,29 @@ const visible = computed(() => {
     return screened.value.filter(({ item }) => eligible.value.includes(item)
       && (stage.value === 'analysis' || !!task.value.reviews[item.id] === (reviewFilter.value === 'done')))
   }
+  const linked = linkedOutsideQuery.value
+  if (stage.value === 'search' && linked) {
+    return [{ item: linked, screening: activeRules.value ? screenOpportunity(linked, activeRules.value) : undefined }, ...screened.value]
+  }
   return screened.value
 })
 const selected = computed(() => visible.value.find(row => row.item.id === selectedId.value) ?? visible.value[0])
 const selectedOpportunity = computed(() => selected.value?.item)
+const scheduledScreening = computed(() => selectedOpportunity.value && screenOpportunity(selectedOpportunity.value, scheduledRules))
+const qualifiesForScheduledReview = computed(() => {
+  const category = scheduledScreening.value?.category
+  return category === '纳入' || category === '观察' || category === '人工复核'
+})
+const scheduledTask = computed(() => {
+  const item = selectedOpportunity.value
+  return item && scenario.tasksForObject('tender-review', item.id).find(run => run.origin === '定时规则' && run.objectVersion === item.published)
+})
+const projectDecision = computed(() => {
+  const run = scheduledTask.value
+  if (!run?.writtenAt) return ''
+  const decision = run.reviews.find(review => review.label === '立项决策')?.decision
+  return decision === 'confirm' ? '已立项' : decision === 'decline' ? '不予立项' : ''
+})
 const categories = computed(() => tenderCategories.map(category => ({
   category,
   count: screened.value.filter(row => row.screening?.category === category).length,
@@ -97,6 +127,16 @@ watch(selectedOpportunity, item => {
   draftNote.value = review?.note ?? ''
 }, { immediate: true })
 watch(stage, () => { categoryFilter.value = '' })
+watch(linkedOpportunity, item => {
+  if (!item || selectedId.value === item.id) return
+  selectedId.value = item.id
+  stage.value = 'search'
+}, { immediate: true })
+
+function selectOpportunity(id: string) {
+  selectedId.value = id
+  void router.replace({ query: { ...route.query, opportunity: id } })
+}
 
 async function runQuery() {
   if (query.value.from && query.value.to && query.value.from > query.value.to) {
@@ -118,7 +158,30 @@ async function runQuery() {
     undo.value = undefined
     report.value = undefined
   }
+  if (route.query.opportunity) void router.replace({ query: { ...route.query, opportunity: undefined } })
   stage.value = 'search'
+}
+
+function runScheduledScreening() {
+  const item = selectedOpportunity.value
+  const screening = scheduledScreening.value
+  if (!item || !screening || !qualifiesForScheduledReview.value || scheduledTask.value) return
+  const amount = item.amount === undefined ? '未披露' : `${amountFormat.format(item.amount)} 万元`
+  const next = scenario.createScheduledTask({
+    scenarioId: 'tender-review',
+    objectId: item.id,
+    objectTitle: item.title,
+    objectVersion: item.published,
+    triggerKey: `daily-screen-${item.published}`,
+    evidence: [
+      { label: '公告来源', detail: `${item.buyer} · ${item.published} 发布。${item.scope}` },
+      { label: '候选依据', detail: `${screening.category}。${screening.reason}` },
+      { label: '技术待核实', detail: item.requirement ?? '请核实交付范围和要求。' },
+      { label: '商务待核实', detail: `预算或投资 ${amount}。投标截止 ${item.deadline ?? '未披露'}。` },
+    ],
+  })
+  if (next) ElMessage.success('已生成筛选任务，可跟进技术、商务核实与立项决策。')
+  else ElMessage.warning('暂时无法生成任务，请检查 AI 员工和接手人是否可用。')
 }
 
 function preview() {
@@ -212,23 +275,30 @@ function downloadCsv() {
 
 <template>
   <div class="scene-layout tender-workbench">
-    <nav class="tender-stages" aria-label="招投标流程">
-      <button v-for="item in stages" :key="item.id" type="button" :aria-current="stage === item.id ? 'step' : undefined" @click="stage = item.id">
-        <component :is="item.icon" :size="17" aria-hidden="true" />{{ item.label }}
-      </button>
-    </nav>
+    <header class="page-controls">
+      <nav class="page-tabs" aria-label="招投标流程">
+        <button v-for="item in stages" :key="item.id" class="page-tab" type="button"
+          :aria-current="stage === item.id ? 'step' : undefined" @click="stage = item.id">
+          <component :is="item.icon" :size="16" aria-hidden="true" />{{ item.label }}
+        </button>
+      </nav>
+    </header>
 
-    <div class="scene-columns">
+    <div class="scene-columns page-body">
       <div class="scene-main">
         <form v-if="stage === 'search'" class="scene-panel scene-pad tender-search" @submit.prevent="runQuery">
           <div class="scene-section-heading"><h2>商机检索</h2><span class="scene-chip">示例数据</span></div>
-          <div class="tender-query">
-            <label class="tender-keyword">关键词<input v-model="query.keyword" placeholder="项目名称、单位或编号" /></label>
-            <label>机会类型<select v-model="query.type"><option value="">全部类型</option><option>招标公告</option><option>拟建项目</option></select></label>
-            <label>地区<select v-model="query.region"><option value="">全部地区</option><option v-for="region in regions" :key="region">{{ region }}</option></select></label>
-            <label>发布起始日期<input v-model="query.from" type="date" /></label>
-            <label>发布结束日期<input v-model="query.to" type="date" /></label>
-            <button type="submit" class="scene-primary"><Search :size="14" aria-hidden="true" />查询机会</button>
+          <div class="tender-query page-toolbar">
+            <div class="page-toolbar-filters">
+              <label class="tender-keyword">关键词<input v-model="query.keyword" class="filter-field" placeholder="项目名称、单位或编号" /></label>
+              <label>机会类型<select v-model="query.type" class="filter-field"><option value="">全部类型</option><option>招标公告</option><option>拟建项目</option></select></label>
+              <label>地区<select v-model="query.region" class="filter-field"><option value="">全部地区</option><option v-for="region in regions" :key="region">{{ region }}</option></select></label>
+              <label>发布起始日期<input v-model="query.from" class="filter-field" type="date" /></label>
+              <label>发布结束日期<input v-model="query.to" class="filter-field" type="date" /></label>
+            </div>
+            <div class="page-toolbar-controls">
+              <button type="submit" class="scene-primary"><Search :size="14" aria-hidden="true" />查询机会</button>
+            </div>
           </div>
         </form>
 
@@ -263,17 +333,24 @@ function downloadCsv() {
         </section>
 
         <section v-else class="scene-panel tender-results" aria-label="商机结果">
-          <div class="scene-section-heading tender-results-head">
-            <h2>{{ stage === 'analysis' ? '待分析与已分析机会' : stage === 'review' ? '复核清单' : '查询结果' }}</h2>
-            <span class="scene-object-id">{{ visible.length }} 条机会</span>
-            <div v-if="stage === 'review'" class="tender-review-filter" role="group" aria-label="复核状态">
-              <button type="button" class="scene-secondary" :aria-pressed="reviewFilter === 'pending'" @click="reviewFilter = 'pending'">待复核 {{ pendingCount }}</button>
-              <button type="button" class="scene-secondary" :aria-pressed="reviewFilter === 'done'" @click="reviewFilter = 'done'">已复核 {{ reviewedCount }}</button>
-              <button v-if="undo" type="button" class="scene-secondary" @click="undoReview"><Undo2 :size="14" aria-hidden="true" />撤销上次复核</button>
+          <div class="tender-results-head page-toolbar">
+            <div class="tender-results-summary">
+              <h2>{{ stage === 'analysis' ? '待分析与已分析机会' : stage === 'review' ? '复核清单' : '查询结果' }}</h2>
+              <span class="scene-object-id">{{ visible.length }} 条机会</span>
+            </div>
+            <div v-if="stage === 'review'" class="page-toolbar-filters">
+              <div class="page-segments" role="group" aria-label="复核状态">
+                <button type="button" class="page-segment" :aria-pressed="reviewFilter === 'pending'" @click="reviewFilter = 'pending'">待复核 {{ pendingCount }}</button>
+                <button type="button" class="page-segment" :aria-pressed="reviewFilter === 'done'" @click="reviewFilter = 'done'">已复核 {{ reviewedCount }}</button>
+              </div>
+            </div>
+            <div v-if="stage === 'review' && undo" class="page-toolbar-controls">
+              <button type="button" class="scene-secondary" @click="undoReview"><Undo2 :size="14" aria-hidden="true" />撤销上次复核</button>
             </div>
           </div>
+          <p v-if="stage === 'search' && linkedOutsideQuery" class="tender-linked muted">从任务打开的机会 {{ linkedOutsideQuery.id }} 已置于列表顶部。</p>
           <div v-if="visible.length">
-            <button v-for="{ item, screening } in visible" :key="item.id" type="button" class="tender-record" :aria-current="selectedOpportunity?.id === item.id ? 'true' : undefined" @click="selectedId = item.id">
+            <button v-for="{ item, screening } in visible" :key="item.id" type="button" class="tender-record" :aria-current="selectedOpportunity?.id === item.id ? 'true' : undefined" @click="selectOpportunity(item.id)">
               <span class="tender-record-main">
                 <small>{{ item.type }} · {{ item.region }} · {{ item.id }}</small>
                 <strong>{{ item.title }}</strong>
@@ -330,6 +407,23 @@ function downloadCsv() {
               <button type="submit" class="scene-primary" :disabled="!draftDecision">保存人工复核</button>
             </form>
             <button v-if="stage === 'search'" type="button" class="scene-secondary" @click="stage = 'rules'"><ListFilter :size="14" aria-hidden="true" />编辑初筛规则</button>
+            <section v-if="scheduledScreening" class="tender-scheduled" aria-labelledby="tender-scheduled-heading">
+              <h4 id="tender-scheduled-heading"><CalendarClock :size="15" aria-hidden="true" />AI 员工筛选与立项</h4>
+              <p>每日筛选样例 · 公告预算 ≥ {{ scheduledRules.minBudget }} 万元 · 排除标题含「{{ scheduledRules.exclude }}」的机会</p>
+              <p><strong>{{ scheduledScreening.category }}</strong> · {{ scheduledScreening.reason }}</p>
+              <template v-if="scheduledTask">
+                <div class="tender-scheduled-state" aria-live="polite">
+                  <span class="scene-chip" :class="{ good: projectDecision === '已立项', warn: scheduledTask.status === 'blocked' || scheduledTask.status === 'returned' }">{{ projectDecision || scenarioStatusLabels[scheduledTask.status] }}</span>
+                  <span>{{ scheduledTask.writtenAt ? '已模拟写回当前机会' : scenarioNextStep(scheduledTask) }}</span>
+                </div>
+                <div v-if="scheduledTask.writtenAt" class="tender-analysis"><p>{{ scheduledTask.result }}</p></div>
+                <RouterLink class="scene-secondary tender-task-link" :to="{ name: 'scenario-task', params: { taskId: scheduledTask.id } }">查看筛选任务 <ArrowUpRight :size="14" aria-hidden="true" /></RouterLink>
+              </template>
+              <template v-else>
+                <p v-if="qualifiesForScheduledReview">技术核实 → 商务核实 → 立项决策</p>
+                <button type="button" class="scene-secondary" :disabled="!qualifiesForScheduledReview" @click="runScheduledScreening"><CalendarClock :size="14" aria-hidden="true" />模拟定时筛选</button>
+              </template>
+            </section>
           </div>
         </template>
         <p v-else class="scene-empty"><FileSearch :size="20" aria-hidden="true" /><br />选择一条机会查看详情。</p>
@@ -354,7 +448,7 @@ function downloadCsv() {
 .scene-panel { min-width: 0; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
 .scene-pad, .scene-assistant { padding: 15px; }
 .scene-section-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 12px; }
-.scene-section-heading h2, .scene-assistant-heading h2 { margin: 0; font-size: 15px; font-weight: 680; }
+.scene-section-heading h2, .scene-assistant-heading h2, .tender-results-summary h2 { margin: 0; font-size: 15px; font-weight: 680; }
 .scene-section-heading p { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
 .scene-chip { display: inline-flex; width: max-content; align-items: center; padding: 3px 7px; border-radius: 5px; background: #eef2fa; color: #4e5e7a; font-size: 11px; font-weight: 620; }
 .scene-chip.good { background: #e7f5ef; color: #22654d; }
@@ -374,22 +468,24 @@ function downloadCsv() {
 .scene-demo { margin-left: auto; color: var(--muted); font-size: 11px; white-space: nowrap; }
 .scene-context { margin: 10px 0; padding: 7px 9px; border-radius: 7px; background: #f3f5fa; color: #52617a; font-size: 12px; }
 .scene-empty { padding: 15px; color: var(--muted); font-size: 13px; text-align: center; }
-.tender-stages { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 13px; }
-.tender-stages button { display: flex; align-items: center; gap: 7px; padding: 9px 13px; border: 1px solid var(--line); border-radius: 8px; background: white; color: #53617b; font-size: 13px; font-weight: 650; }
-.tender-stages button[aria-current="step"] { border-color: var(--scene-accent); background: var(--scene-accent); color: white; }
-.tender-stages button:not([aria-current]):hover { background: var(--scene-tint); }
-.tender-query, .tender-rules { display: flex; flex-wrap: wrap; align-items: end; gap: 9px; }
+.tender-query.page-toolbar { align-items: end; margin-bottom: 0; }
+.tender-query .page-toolbar-filters { flex: 1 1 min(634px, 100%); align-items: end; }
+.tender-rules { display: flex; flex-wrap: wrap; align-items: end; gap: 9px; }
+.tender-rules > button { margin-inline-start: auto; }
 .tender-query label, .tender-rules label, .tender-review label { display: grid; flex: 1 0 110px; gap: 5px; color: var(--muted); font-size: 12px; }
+.tender-query label { flex: 0 1 110px; min-width: 0; }
 .tender-query .tender-keyword { flex-basis: 170px; }
-.tender-query :is(input, select), .tender-rules input, .tender-review :is(select, textarea) { min-width: 0; width: 100%; min-height: 33px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px; background: white; color: var(--text); }
+.tender-query .filter-field { width: 100%; }
+.tender-query input[type="date"] { padding-inline: 8px; }
+.tender-rules input, .tender-review :is(select, textarea) { min-width: 0; width: 100%; min-height: 33px; padding: 5px 8px; border: 1px solid var(--line); border-radius: 7px; background: white; color: var(--text); }
 .tender-impact { margin-top: 14px; }
 .tender-counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(70px, 1fr)); gap: 6px; }
 .tender-counts button { display: grid; gap: 3px; padding: 7px; border: 1px solid var(--line); border-radius: 7px; background: #f6f8fc; color: #51617c; font-size: 12px; }
 .tender-counts button[aria-pressed="true"] { border-color: var(--scene-accent); background: var(--scene-tint); }
 .tender-counts strong, .tender-summary dd { font-size: 19px; color: var(--text); }
-.tender-results-head { margin: 0; padding: 14px; }
-.tender-review-filter { display: flex; flex: 0 0 100%; flex-wrap: wrap; gap: 6px; }
-.tender-review-filter [aria-pressed="true"] { background: var(--scene-tint); border-color: var(--scene-accent); }
+.tender-results-head { margin-bottom: 0; padding: 8px 12px; }
+.tender-results-summary { display: flex; flex-wrap: wrap; align-items: baseline; gap: 5px 8px; min-width: 0; }
+.tender-linked { margin: 0; padding: 0 14px 8px; font-size: 12px; }
 .tender-record { display: flex; width: 100%; justify-content: space-between; gap: 10px; padding: 12px 14px; border: 0; border-top: 1px solid var(--line); border-left: 3px solid transparent; background: white; text-align: left; color: var(--text); }
 .tender-record:last-child { border-radius: 0 0 12px 12px; }
 .tender-record[aria-current="true"], .tender-record:hover { border-left-color: var(--scene-accent); background: var(--scene-tint); }
@@ -409,6 +505,15 @@ function downloadCsv() {
 .tender-review label { flex-basis: auto; }
 .tender-review textarea { resize: vertical; }
 .tender-review button { justify-self: start; }
+.tender-scheduled { display: grid; gap: 7px; margin-top: 3px; padding: 10px 0 0; border-top: 1px solid var(--line); }
+.tender-scheduled h4, .tender-scheduled-state { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.tender-scheduled h4 { margin: 0; font-size: 13px; }
+.tender-scheduled h4 svg { color: var(--scene-accent); }
+.tender-scheduled p, .tender-scheduled-state { font-size: 12px; }
+.tender-scheduled-state { color: var(--muted); }
+.tender-scheduled .scene-secondary { justify-self: start; }
+.tender-scheduled .scene-secondary:disabled { border-color: var(--line); background: var(--canvas); color: var(--muted); opacity: .75; }
+.tender-task-link:hover { text-decoration: underline; }
 .tender-summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 0; }
 .tender-summary div { padding: 10px; border-radius: 8px; background: var(--scene-tint); }
 .tender-summary dt { color: var(--muted); font-size: 12px; }

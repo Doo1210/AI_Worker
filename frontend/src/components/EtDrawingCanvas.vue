@@ -7,6 +7,7 @@ const props = defineProps<{
   drawing?: { name: string, entities: DrawingEntity[], bounds: Bounds }
   selection: DrawingEntity[]
   loading: boolean
+  previewOnly?: boolean
 }>()
 const emit = defineEmits<{
   workspace: []
@@ -42,7 +43,10 @@ const projection = computed(() => {
   }
 })
 
-const layerColors = new Map([['HOLES', '#8fcef4'], ['CENTER', '#7686a6'], ['DIMENSIONS', '#95a8ce']])
+const layerColors = new Map([
+  ['HOLES', '#8fcef4'], ['CENTER', '#7686a6'], ['DIMENSIONS', '#95a8ce'],
+  ['TERMINALS', '#97c8ed'], ['WIRING', '#7edbc2'], ['CABLE_TAGS', '#c9a8f9'],
+])
 
 watch(canvas, (element, _, onCleanup) => {
   if (!element) return
@@ -103,12 +107,12 @@ watchEffect(() => {
 })
 
 function dragEnter(event: DragEvent) {
-  if (event.dataTransfer?.types.includes('Files')) dragDepth.value++
+  if (!props.previewOnly && event.dataTransfer?.types.includes('Files')) dragDepth.value++
 }
 
 function dropFile(event: DragEvent) {
   dragDepth.value = 0
-  if (event.dataTransfer?.files.length) emit('files', event.dataTransfer.files)
+  if (!props.previewOnly && event.dataTransfer?.files.length) emit('files', event.dataTransfer.files)
 }
 
 function canvasPoint(event: PointerEvent) {
@@ -150,6 +154,13 @@ function cancelSelection() {
   box.value = undefined
   pointerId = undefined
 }
+
+function revealSelection() {
+  zoom.value = 1
+  canvas.value?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+}
+
+defineExpose({ revealSelection })
 </script>
 
 <template>
@@ -163,7 +174,7 @@ function cancelSelection() {
     @drop.prevent="dropFile"
   >
     <template v-if="drawing">
-      <div class="drawing-toolbar">
+      <div v-if="!previewOnly" class="drawing-toolbar">
         <span class="drawing-name" :title="drawing.name"><FileBox :size="17" aria-hidden="true" />{{ drawing.name }}</span>
         <div class="drawing-actions">
           <button type="button" aria-label="选择工作空间文件" :disabled="loading" @click="emit('workspace')"><FolderOpen :size="16" aria-hidden="true" />工作空间文件</button>
@@ -193,7 +204,7 @@ function cancelSelection() {
         </div>
       </div>
     </template>
-    <div v-else class="drawing-empty">
+    <div v-else-if="!previewOnly" class="drawing-empty">
       <span class="drawing-symbol" aria-hidden="true"><FileBox :size="36" :stroke-width="1.45" /></span>
       <h2>打开图纸开始试用</h2>
       <p>支持 ASCII DXF 图纸预览<br />可浏览图纸、框选实体，并使用智能问图</p>

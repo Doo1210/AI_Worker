@@ -2,12 +2,16 @@
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, ArrowRight, ChevronDown, ClipboardList, MessageSquare, Plus } from 'lucide-vue-next'
-import { ElDrawer, ElMessage } from 'element-plus'
+import { ElDrawer, ElMessage, ElRadioButton, ElRadioGroup } from 'element-plus'
 import EmployeeWorkCards from '@/components/EmployeeWorkCards.vue'
 import { employeeExamples } from '@/components/employeeExamples'
 import { usePlatformStore, type EmployeeTaskDraft } from '@/stores/platform'
+import { useEtDrawingReviewStore } from '@/stores/etDrawingReview'
+import { etReviewId, etReviewTitle, scenarioAssignmentChannels, scenarioDefinitions, scenarioNextStep, scenarioStatusLabels, useScenarioTaskStore } from '@/stores/scenarioTasks'
 
 const store = usePlatformStore()
+const etReview = useEtDrawingReviewStore()
+const scenario = useScenarioTaskStore()
 const route = useRoute()
 const router = useRouter()
 const directorySearch = computed(() => typeof route.query.q === 'string' ? route.query.q : undefined)
@@ -18,9 +22,13 @@ const selectedThread = computed(() => {
   return threads.find(thread => thread.id === route.query.thread) ?? threads[0]
 })
 const employeeTasks = computed(() => store.myTasks.filter(task => task.employeeId === employee.value?.id))
+const scenarioTasks = computed(() => scenario.assignedTasks.filter(task => task.employeeId === employee.value?.id))
 const threadTasks = computed(() => employeeTasks.value.filter(task => task.threadId === selectedThread.value?.id))
 const commonWork = computed(() => employee.value ? employeeExamples(employee.value) : [])
 const focusedTask = computed(() => threadTasks.value.find(task => task.id === route.query.task))
+const focusedScenario = computed(() => scenarioTasks.value.find(task => task.id === route.query.scenario && task.threadId === selectedThread.value?.id))
+const etScenario = scenarioDefinitions['et-review']
+const canLinkReview = computed(() => employee.value?.id === etScenario.employeeId && etReview.hasWorkspaceAccess)
 const timeline = computed(() => {
   const messages = selectedThread.value?.messages ?? []
   const latestTaskMessages = new Map<string, string>()
@@ -32,14 +40,19 @@ const timeline = computed(() => {
     ...messages.map(message => ({
       id: message.id,
       message,
+      at: message.createdAt,
+      scenario: undefined,
       task: message.taskId && latestTaskMessages.get(message.taskId) === message.id
         ? tasksById.get(message.taskId)
         : undefined,
     })),
     ...threadTasks.value.filter(task => !latestTaskMessages.has(task.id)).map(task => ({
-      id: 'unlinked-' + task.id, message: undefined, task,
+      id: 'unlinked-' + task.id, message: undefined, task, at: task.createdAt ?? task.updatedAt, scenario: undefined,
     })),
-  ]
+    ...scenarioTasks.value.filter(task => task.threadId === selectedThread.value?.id).map(task => ({
+      id: task.id, message: undefined, task: undefined, at: task.createdAt, scenario: task,
+    })),
+  ].sort((left, right) => left.at.localeCompare(right.at))
 })
 
 const draft = ref('')
@@ -50,6 +63,9 @@ const assignmentOpen = ref(false)
 const workDrawerOpen = ref(false)
 const proposalMessageId = ref<string>()
 const taskDraft = reactive<EmployeeTaskDraft>({ title: '', request: '', deliverable: '' })
+const linkReview = ref(false)
+const reviewVersion = ref<'V1' | 'V2'>('V2')
+const reviewChannel = ref<typeof scenarioAssignmentChannels[number]>('工作门户')
 const supplementId = ref('')
 const supplementText = ref('')
 const supplementTask = computed(() => employeeTasks.value.find(task => task.id === supplementId.value && task.status === '待补充'))
@@ -70,6 +86,13 @@ function focusComposer() {
 
 function openAssignment(draft?: Partial<EmployeeTaskDraft>, messageId?: string) {
   Object.assign(taskDraft, { title: '', request: '', deliverable: '' }, draft)
+  linkReview.value = canLinkReview.value && route.query.review === etReviewId && !messageId
+  reviewVersion.value = route.query.version === 'V1' ? 'V1' : 'V2'
+  reviewChannel.value = '工作门户'
+  if (linkReview.value && !taskDraft.request) {
+    taskDraft.request = '请对照材料清单核对接线标识和部件编号，列出需确认的差异。'
+    taskDraft.deliverable = '图纸交付核对清单和复核依据'
+  }
   proposalMessageId.value = messageId
   assignmentOpen.value = true
 }
@@ -101,8 +124,28 @@ async function send() {
 
 function submitAssignment() {
   const employeeId = employee.value?.id
-  if (!employeeId || !taskDraft.title.trim() || !taskDraft.request.trim()) return
+  if (!employeeId || (!linkReview.value && !taskDraft.title.trim()) || !taskDraft.request.trim()) return
   const threadId = selectedThread.value?.id ?? store.startEmployeeThread(employeeId)
+  if (!threadId) {
+    ElMessage.error('暂时无法建立员工沟通，请刷新后重试。')
+    return
+  }
+  if (linkReview.value && canLinkReview.value) {
+    const task = scenario.createAssignedTask({
+      scenarioId: 'et-review', objectId: etReviewId, objectTitle: etReviewTitle, objectVersion: reviewVersion.value,
+      evidence: [
+        { label: '图纸版本', detail: `${etReviewId} · ${reviewVersion.value}` },
+        { label: '材料清单', detail: '示例材料清单标注 V1' },
+      ],
+    }, taskDraft.request, taskDraft.deliverable ?? '', reviewChannel.value, threadId)
+    if (!task) {
+      ElMessage.error('当前无法交办此业务记录，请检查员工权限和生效版本。')
+      return
+    }
+    assignmentOpen.value = false
+    void router.push({ name: 'scenario-task', params: { taskId: task.id }, query: { from: 'assigned', employee: employeeId } })
+    return
+  }
   const task = store.assignEmployeeTask(threadId, taskDraft, proposalMessageId.value)
   if (!task) {
     ElMessage.error('暂时无法交办任务，请检查任务内容后重试。')
@@ -139,13 +182,16 @@ watch([() => employee.value?.id, () => route.query.mode], ([id, mode]) => {
   else focusComposer()
   const query = { ...route.query }
   delete query.mode
+  delete query.review
+  delete query.version
   void router.replace({ name: 'employee-contact', params: { id }, query })
 }, { immediate: true })
 
-watch([() => selectedThread.value?.id, () => selectedThread.value?.messages.length, focusedTask], async () => {
+watch([() => selectedThread.value?.id, () => selectedThread.value?.messages.length, focusedTask, focusedScenario], async () => {
   await nextTick()
-  if (focusedTask.value) {
-    document.getElementById('employee-task-' + focusedTask.value.id)?.scrollIntoView({ block: 'nearest' })
+  const focused = focusedTask.value ?? focusedScenario.value
+  if (focused) {
+    document.getElementById('employee-task-' + focused.id)?.scrollIntoView({ block: 'nearest' })
   } else if (messageList.value) {
     messageList.value.scrollTop = messageList.value.scrollHeight
   }
@@ -153,9 +199,9 @@ watch([() => selectedThread.value?.id, () => selectedThread.value?.messages.leng
 </script>
 
 <template>
-  <section class="page employee-page">
+  <section class="page page-surface employee-page">
     <template v-if="employee">
-      <header class="panel employee-profile" aria-label="员工资料">
+      <header class="page-controls page-toolbar page-tab-toolbar employee-profile" aria-label="员工资料">
         <div class="employee-identity">
           <RouterLink :to="directoryLink" class="icon-button profile-back" aria-label="返回员工目录" title="返回员工目录">
             <ArrowLeft :size="16" aria-hidden="true" />
@@ -163,13 +209,12 @@ watch([() => selectedThread.value?.id, () => selectedThread.value?.messages.leng
           <span class="employee-avatar" :style="{ background: employee.color }" aria-hidden="true">{{ employee.name.slice(0, 1) }}</span>
           <div class="employee-name">
             <div class="employee-title">
-              <h1 :title="employee.name">{{ employee.name }}</h1>
+              <strong :title="employee.name">{{ employee.name }}</strong>
               <span class="employee-role" :title="employee.role">{{ employee.role }}</span>
             </div>
-            <p v-if="employee.description" :title="employee.description">{{ employee.description }}</p>
           </div>
         </div>
-        <div class="profile-actions">
+        <div class="page-toolbar-controls profile-actions">
           <el-button class="work-drawer-trigger" @click="workDrawerOpen = true">任务记录</el-button>
           <el-dropdown v-if="commonWork.length" trigger="click" @command="(title: string) => openAssignment({ title })">
             <el-button>常见任务 <ChevronDown :size="13" aria-hidden="true" class="work-menu-icon" /></el-button>
@@ -184,7 +229,7 @@ watch([() => selectedThread.value?.id, () => selectedThread.value?.messages.leng
       </header>
 
       <div class="employee-workspace">
-        <section class="panel conversation" aria-label="员工沟通">
+        <section class="conversation" aria-label="员工沟通">
           <header class="conversation-header">
             <h2>沟通记录</h2>
           </header>
@@ -231,6 +276,18 @@ watch([() => selectedThread.value?.id, () => selectedThread.value?.messages.leng
                   </RouterLink>
                 </div>
               </section>
+              <section v-if="item.scenario" :id="'employee-task-' + item.scenario.id" class="work-card"
+                :class="{ 'task-focused': item.scenario.id === focusedScenario?.id }">
+                <div class="work-card-title"><ClipboardList :size="16" aria-hidden="true" /><strong>{{ item.scenario.title }}</strong>
+                  <el-tag size="small">{{ scenarioStatusLabels[item.scenario.status] }}</el-tag>
+                </div>
+                <p>{{ scenarioNextStep(item.scenario) }}</p>
+                <div class="work-card-actions">
+                  <RouterLink :to="{ name: 'scenario-task', params: { taskId: item.scenario.id }, query: { from: 'assigned', employee: employee.id } }" class="text-link">
+                    查看任务 <ArrowRight :size="14" aria-hidden="true" />
+                  </RouterLink>
+                </div>
+              </section>
             </div>
             <div v-if="sending" class="sending-note">员工正在回复…</div>
           </div>
@@ -245,20 +302,31 @@ watch([() => selectedThread.value?.id, () => selectedThread.value?.messages.leng
             </div>
           </form>
         </section>
-        <aside class="panel employee-work-panel" aria-label="我交办给这位员工的任务">
-          <EmployeeWorkCards :tasks="employeeTasks" :employee-id="employee.id" @supplement="openSupplement" />
+        <aside class="employee-work-panel" aria-label="我交办给这位员工的任务">
+          <EmployeeWorkCards :tasks="employeeTasks" :scenario-tasks="scenarioTasks" :employee-id="employee.id" @supplement="openSupplement" />
         </aside>
       </div>
 
       <ElDrawer v-model="workDrawerOpen" class="employee-work-drawer" title="我交办的任务" size="min(100vw, 360px)" append-to-body>
-        <EmployeeWorkCards :tasks="employeeTasks" :employee-id="employee.id" hide-heading @supplement="openSupplement" />
+        <EmployeeWorkCards :tasks="employeeTasks" :scenario-tasks="scenarioTasks" :employee-id="employee.id" hide-heading @supplement="openSupplement" />
       </ElDrawer>
 
-      <el-dialog v-model="assignmentOpen" title="交办任务" width="min(520px, calc(100vw - 28px))">
+      <el-dialog v-model="assignmentOpen" title="交办任务" width="min(520px, calc(100vw - 28px))" append-to-body>
         <el-form label-position="top" @submit.prevent="submitAssignment">
           <p class="recipient"><span class="muted">交给</span> <strong>{{ employee.name }}</strong></p>
-          <el-form-item label="任务名称" required for="employee-assignment-title">
+          <el-form-item v-if="canLinkReview" label="业务记录">
+            <el-checkbox v-model="linkReview">关联 ET-052 图纸评审</el-checkbox>
+          </el-form-item>
+          <el-form-item v-if="linkReview" label="图纸版本">
+            <el-radio-group v-model="reviewVersion"><el-radio-button value="V1">V1</el-radio-button><el-radio-button value="V2">V2</el-radio-button></el-radio-group>
+          </el-form-item>
+          <el-form-item v-else label="任务名称" required for="employee-assignment-title">
             <el-input id="employee-assignment-title" v-model="taskDraft.title" maxlength="60" placeholder="例如 整理本周售后工单" />
+          </el-form-item>
+          <el-form-item v-if="linkReview" label="来源入口">
+            <el-select v-model="reviewChannel" aria-label="来源入口">
+              <el-option v-for="channel in scenarioAssignmentChannels" :key="channel" :label="channel" :value="channel" />
+            </el-select>
           </el-form-item>
           <el-form-item label="具体要求" required for="employee-assignment-request">
             <el-input id="employee-assignment-request" v-model="taskDraft.request" type="textarea" :rows="4" placeholder="说明处理范围、已有资料和需要注意的事项" />
@@ -268,12 +336,12 @@ watch([() => selectedThread.value?.id, () => selectedThread.value?.messages.leng
           </el-form-item>
           <div class="dialog-actions">
             <el-button @click="assignmentOpen = false">取消</el-button>
-            <el-button type="primary" native-type="submit" :disabled="!taskDraft.title.trim() || !taskDraft.request.trim()">提交交办</el-button>
+            <el-button type="primary" native-type="submit" :disabled="(!linkReview && !taskDraft.title.trim()) || !taskDraft.request.trim()">提交交办</el-button>
           </div>
         </el-form>
       </el-dialog>
 
-      <el-dialog v-model="supplementOpen" title="补充信息" width="min(500px, calc(100vw - 28px))">
+      <el-dialog v-model="supplementOpen" title="补充信息" width="min(500px, calc(100vw - 28px))" append-to-body>
         <form @submit.prevent="submitSupplement">
           <p class="supplement-question">{{ supplementTask?.detail }}</p>
           <el-input v-model="supplementText" type="textarea" :rows="3" aria-label="补充内容" placeholder="输入要补充的信息" />
@@ -284,7 +352,7 @@ watch([() => selectedThread.value?.id, () => selectedThread.value?.messages.leng
         </form>
       </el-dialog>
     </template>
-    <el-empty v-else class="panel" description="无法联系此员工">
+    <el-empty v-else description="无法联系此员工">
       <RouterLink :to="directoryLink" class="text-link">
         <ArrowLeft :size="15" aria-hidden="true" /> 返回员工目录
       </RouterLink>
@@ -293,26 +361,24 @@ watch([() => selectedThread.value?.id, () => selectedThread.value?.messages.leng
 </template>
 
 <style scoped>
-.employee-page { display: flex; flex-direction: column; gap: 12px; height: 100%; container-type: inline-size; }
+.employee-page { display: flex; flex-direction: column; height: 100%; min-height: max(100%, 396px); container-type: inline-size; }
 .text-link { display: inline-flex; align-items: center; gap: 5px; width: fit-content; color: var(--accent); font-size: 13px; }
 .text-link:hover { text-decoration: underline; }
-.employee-profile { display: flex; align-items: center; justify-content: space-between; flex: none; min-height: 62px; gap: 12px; padding: 8px 12px; }
-.employee-identity { display: flex; align-items: center; flex: 1; min-width: 0; gap: 9px; }
+.employee-profile { flex: none; }
+.employee-identity { display: flex; align-items: center; flex: 1 1 160px; min-width: 0; gap: 9px; }
 .profile-back { flex: 0 0 30px; width: 30px; height: 30px; }
 .employee-avatar { display: grid; flex: 0 0 34px; height: 34px; place-items: center; color: #fff; border-radius: 8px; font-size: 15px; font-weight: 700; }
 .employee-name { flex: 1; min-width: 0; }
 .employee-title { display: flex; align-items: baseline; gap: 7px; }
-.employee-name h1 { margin: 0; font-size: 16px; line-height: 1.4; }
+.employee-title strong { font-size: 14px; line-height: 1.4; }
 .employee-role { color: var(--muted); font-size: 11px; }
-.employee-name p { margin: 2px 0 0; color: var(--muted); font-size: 12px; line-height: 1.4; }
-.employee-name h1, .employee-role, .employee-name p { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.profile-actions { display: flex; align-items: center; gap: 6px; flex: none; }
-.profile-actions .el-button, .work-card-actions .el-button { margin: 0; }
+.employee-title strong, .employee-role { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.work-card-actions .el-button { margin: 0; }
 .profile-actions .el-button { padding-inline: 9px; font-size: 12px; }
 .profile-actions .work-drawer-trigger { display: none; }
 .work-menu-icon { margin-left: 4px; }
-.employee-workspace { display: grid; flex: 1; grid-template-columns: minmax(0, 1fr) 300px; gap: 12px; min-height: 280px; }
-.employee-work-panel { display: flex; min-width: 0; min-height: 0; overflow: hidden; }
+.employee-workspace { display: grid; flex: 1; grid-template-columns: minmax(0, 1fr) 300px; min-height: 280px; }
+.employee-work-panel { display: flex; min-width: 0; min-height: 0; overflow: hidden; border-inline-start: 1px solid var(--line); }
 .conversation { min-width: 0; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
 .conversation-header { flex: none; padding: 12px 16px; border-bottom: 1px solid var(--line); }
 .conversation-header h2 { margin: 0; font-size: 14px; line-height: 20px; }
@@ -347,8 +413,7 @@ watch([() => selectedThread.value?.id, () => selectedThread.value?.messages.leng
   .profile-actions .work-drawer-trigger { display: inline-flex; }
 }
 @container (max-width: 520px) {
-  .employee-profile { align-items: stretch; flex-direction: column; gap: 7px; padding: 7px 9px; }
-  .profile-actions { justify-content: flex-end; flex-wrap: wrap; }
+  .employee-profile { padding: 7px 9px; }
   .profile-actions .el-button { height: 29px; padding-inline: 7px; }
   .conversation-messages, .conversation-header, .composer { padding-inline: 10px; }
 }

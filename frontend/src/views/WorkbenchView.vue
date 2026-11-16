@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Close, Document, Grid, MagicStick, Search } from '@element-plus/icons-vue'
-import { DraftingCompass, FileSearch } from 'lucide-vue-next'
+import { Close, Grid, MagicStick, Search } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import CostWorkbench from '@/components/CostWorkbench.vue'
 import EtDesignWorkbench from '@/components/EtDesignWorkbench.vue'
@@ -53,14 +52,6 @@ function formatDate(value: string) {
   return Number.isNaN(date.getTime()) ? '' : formatter.format(date)
 }
 
-function workbenchIcon(icon: string) {
-  const key = icon.toLowerCase()
-  if (key.includes('design') || key.includes('brush') || key.includes('pen') || key.includes('设计')) return DraftingCompass
-  if (key === 'file-search') return FileSearch
-  if (key.includes('document') || key.includes('file')) return Document
-  return Grid
-}
-
 function showRecord(id: string) {
   if (!workbench.value?.records.some(item => item.id === id)) return
   void router.replace({ name: 'workbench', params: { id: workbench.value.id }, query: { record: id } })
@@ -95,20 +86,8 @@ watch([workbenchId, () => store.currentUser?.id], () => {
 </script>
 
 <template>
-  <section class="page workbench-page" :class="{ 'design-page': isDesignCanvas, 'cost-page': isCostWorkbench }">
+  <section class="page-surface workbench-page" :aria-label="workbench?.name ?? '工作台'">
     <template v-if="workbench">
-      <header v-if="!isCostWorkbench && !isTradeWorkbench && !isDesignStudio && !isProjectWorkbench" class="page-header">
-        <div class="workbench-heading">
-          <span class="app-icon" :style="{ '--app-color': workbench.color }">
-            <el-icon><component :is="workbenchIcon(workbench.icon)" /></el-icon>
-          </span>
-          <div>
-            <h1>{{ workbench.name }}</h1>
-            <p class="muted">{{ workbench.description }}</p>
-          </div>
-        </div>
-      </header>
-
       <EtDesignWorkbench v-if="isDesignCanvas" />
       <DesignStudioWorkbench v-else-if="isDesignStudio" :key="store.currentUser.id" :user-id="store.currentUser.id" />
       <CostWorkbench v-else-if="isCostWorkbench" />
@@ -116,18 +95,18 @@ watch([workbenchId, () => store.currentUser?.id], () => {
       <TradeWorkbench v-else-if="isTradeWorkbench" />
       <ProjectWorkbench v-else-if="isProjectWorkbench" :key="store.currentUser.id" :user-id="store.currentUser.id" />
       <div v-else class="records-layout" :class="{ 'has-detail': record }">
-        <section class="panel records-panel" aria-label="业务记录">
-          <div class="records-header">
+        <section class="records-panel" aria-label="业务记录">
+          <div class="records-header page-toolbar page-tab-toolbar">
             <div>
               <h2 class="section-title">业务记录</h2>
               <span class="record-count">{{ filteredRecords.length }} 条记录</span>
             </div>
-            <div class="record-filters">
+            <div class="record-filters page-toolbar-filters">
               <el-input v-model="searchText" :prefix-icon="Search" placeholder="搜索业务记录" aria-label="搜索业务记录" clearable />
-              <el-select v-model="statusFilter" aria-label="按状态筛选" placeholder="全部状态" clearable>
+              <el-select v-model="statusFilter" popper-class="filter-options" aria-label="按状态筛选" placeholder="全部状态" clearable>
                 <el-option v-for="status in statuses" :key="status" :label="status" :value="status" />
               </el-select>
-              <el-select v-if="categories.length > 1" v-model="categoryFilter" aria-label="按分类筛选" placeholder="全部分类" clearable>
+              <el-select v-if="categories.length > 1" v-model="categoryFilter" popper-class="filter-options" aria-label="按分类筛选" placeholder="全部分类" clearable>
                 <el-option v-for="category in categories" :key="category" :label="category" :value="category" />
               </el-select>
             </div>
@@ -166,7 +145,7 @@ watch([workbenchId, () => store.currentUser?.id], () => {
           </div>
         </section>
 
-        <aside v-if="record" class="panel record-details" aria-label="记录详情">
+        <aside v-if="record" class="record-details" aria-label="记录详情">
           <div class="record-detail-bar">
             <h2 class="section-title">记录详情</h2>
             <el-button :icon="Close" circle text aria-label="关闭记录详情" @click="closeRecord" />
@@ -194,36 +173,21 @@ watch([workbenchId, () => store.currentUser?.id], () => {
       </div>
     </template>
 
-    <template v-else>
-      <header class="page-header"><h1>工作台</h1></header>
-      <div class="panel workbench-empty">
-        <el-icon aria-hidden="true"><Grid /></el-icon>
-        <h2>{{ workbenchId ? '此工作台未向当前账号开放' : '暂无可用工作台' }}</h2>
-      </div>
-    </template>
+    <div v-else class="workbench-empty">
+      <el-icon aria-hidden="true"><Grid /></el-icon>
+      <h2>{{ workbenchId ? '此工作台未向当前账号开放' : '暂无可用工作台' }}</h2>
+    </div>
   </section>
 </template>
 
 <style scoped>
-.workbench-page { width: 100%; }
-.cost-page { min-width: 0; }
-.design-page .page-header { margin-bottom: 14px; }
-.design-page .page-header h1 { margin-bottom: 3px; font-size: clamp(21px, 2.5vw, 26px); }
-.design-page .page-header p { font-size: 13px; }
-.app-icon {
-  display: grid; place-items: center; flex: 0 0 auto; width: 46px; height: 46px; border-radius: 10px;
-  color: var(--app-color, var(--accent)); background: #edf2ff; font-size: 22px;
-  background: color-mix(in srgb, var(--app-color, var(--accent)) 12%, white);
-}
-.workbench-heading { display: flex; align-items: center; gap: 13px; }
-.records-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: 14px; align-items: start; }
+.workbench-page { display: flex; flex-direction: column; }
+.records-layout { display: grid; flex: 1; grid-template-columns: minmax(0, 1fr); }
 .records-layout.has-detail { grid-template-columns: minmax(0, 1fr) minmax(230px, 300px); }
-.records-panel { min-width: 0; overflow: hidden; }
-.records-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px; padding: 15px; }
+.records-panel { min-width: 0; }
 .records-header > div:first-child { display: flex; align-items: baseline; gap: 8px; }
 .records-header .section-title { margin: 0; }
 .record-count { color: var(--muted); font-size: 12px; }
-.record-filters { display: flex; flex-wrap: wrap; gap: 7px; }
 .record-filters .el-input { width: min(180px, 100%); }
 .record-filters .el-select { width: 108px; }
 .records-table-wrap { overflow-x: auto; }
@@ -235,7 +199,7 @@ watch([workbenchId, () => store.currentUser?.id], () => {
 .records-table tbody tr:hover, .records-table tbody .record-selected { background: #edf2ff; }
 .record-link { padding: 0; border: 0; background: transparent; color: var(--text); text-align: left; font: inherit; font-weight: 650; cursor: pointer; }
 .record-link:hover, .record-link[aria-current="true"] { color: var(--accent); }
-.record-details { min-width: 0; padding: 14px; }
+.record-details { min-width: 0; padding: 14px; border-inline-start: 1px solid var(--line); }
 .record-detail-bar { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .record-detail-bar .section-title { margin: 0; }
 .record-details h3 { margin: 8px 0 13px; font-size: 16px; overflow-wrap: anywhere; }
@@ -249,7 +213,7 @@ watch([workbenchId, () => store.currentUser?.id], () => {
 .workbench-empty .el-icon { color: var(--accent); font-size: 25px; }
 .workbench-empty h2 { margin: 0; font-size: 15px; }
 @media (max-width: 1020px) {
-  .records-layout.has-detail { grid-template-columns: minmax(0, 1fr); }
-  .record-details { order: -1; }
+  .records-layout.has-detail { grid-template-columns: minmax(0, 1fr); align-content: start; }
+  .record-details { order: -1; border-inline-start: 0; border-bottom: 1px solid var(--line); }
 }
 </style>

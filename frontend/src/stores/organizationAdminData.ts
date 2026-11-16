@@ -50,6 +50,19 @@ export interface AdminConnection {
   lastCheckedAt?: string
 }
 
+export interface OrganizationDepartment {
+  id: string
+  name: string
+  parentId?: string
+  leaderId?: string
+}
+
+export const organizationRoleLabels = {
+  admin: '组织管理员',
+  'department-admin': '部门管理员',
+  member: '普通成员',
+}
+
 export interface AdminChange {
   id: string
   at: string

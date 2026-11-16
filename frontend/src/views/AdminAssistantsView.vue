@@ -85,18 +85,15 @@ watch(() => route.query.assistant, id => {
 </script>
 
 <template>
-  <div class="page">
-      <header class="page-header">
-        <div>
-          <h1>组织助理配置</h1>
-          <p>编辑、试用和发布获授权维护的组织助理。</p>
-        </div>
-        <el-button v-if="isAdmin" type="primary" :icon="Plus" @click="openEditor()">新建组织助理</el-button>
-      </header>
-
-      <section class="panel assistant-list" aria-label="组织助理列表">
-        <div class="assistant-filters">
-          <el-input v-model="query" :prefix-icon="Search" aria-label="搜索组织助理" placeholder="搜索助理名称或用途" clearable />
+  <div class="page page-surface">
+      <section aria-label="组织助理列表">
+        <div class="page-toolbar page-tab-toolbar assistant-filters">
+          <div class="page-toolbar-filters">
+            <el-input v-model="query" :prefix-icon="Search" aria-label="搜索组织助理" placeholder="搜索助理名称或用途" clearable />
+          </div>
+          <div v-if="isAdmin" class="page-toolbar-controls">
+            <el-button type="primary" :icon="Plus" @click="openEditor()">新建组织助理</el-button>
+          </div>
         </div>
         <template v-if="listedAssistants.length">
           <div class="assistant-columns" aria-hidden="true"><span>助理</span><span>生效版本</span><span>操作</span></div>
@@ -154,9 +151,7 @@ watch(() => route.query.assistant, id => {
 </template>
 
 <style scoped>
-.assistant-list { overflow: hidden; }
-.assistant-filters { padding: 14px 16px; }
-.assistant-filters .el-input { max-width: 340px; }
+.assistant-filters .el-input { width: min(100%, 190px); }
 .assistant-columns, .assistant-row {
   display: grid;
   grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) 3rem;

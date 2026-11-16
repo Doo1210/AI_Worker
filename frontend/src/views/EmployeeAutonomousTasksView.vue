@@ -36,8 +36,8 @@ function formatDate(value: string) {
 </script>
 
 <template>
-  <section class="page autonomous-page" aria-labelledby="autonomous-heading">
-    <nav class="autonomous-navigation" aria-label="页面位置">
+  <section class="page page-surface autonomous-page" :aria-label="selectedTask?.title ?? '自主任务'">
+    <nav class="page-controls page-toolbar page-tab-toolbar autonomous-navigation" aria-label="页面位置">
       <RouterLink :to="fromOverview ? overviewLink : directoryLink" class="back-link"><ArrowLeft :size="15" aria-hidden="true" /> {{ fromOverview ? '任务总览' : '员工目录' }}</RouterLink>
       <template v-if="!fromOverview && employee && hasTaskSelection">
         <span aria-hidden="true">/</span>
@@ -45,21 +45,16 @@ function formatDate(value: string) {
       </template>
     </nav>
 
-    <header class="page-header autonomous-header">
-      <div>
-        <h1 id="autonomous-heading">{{ selectedTask?.title ?? '自主任务' }}</h1>
-        <p v-if="employee">{{ employee.name }} · 示例运行记录</p>
-      </div>
-      <span v-if="selectedTask" class="task-status" :class="selectedTask.status">{{ autonomousTaskStatusLabels[selectedTask.status] }}</span>
-    </header>
-
-    <el-empty v-if="!employee" class="panel" description="当前账号无法查看这位员工的自主任务" :image-size="88" />
+    <el-empty v-if="!employee" description="当前账号无法查看这位员工的自主任务" :image-size="88" />
 
     <template v-else-if="hasTaskSelection">
       <template v-if="selectedTask">
-        <div class="autonomous-detail">
+        <div class="page-body autonomous-detail">
           <section class="panel detail-panel" aria-labelledby="autonomous-progress-heading">
-            <h2 id="autonomous-progress-heading" class="section-title">执行进展</h2>
+            <div class="task-card-heading">
+              <h2 id="autonomous-progress-heading" class="section-title">执行进展</h2>
+              <span class="task-status" :class="selectedTask.status">{{ autonomousTaskStatusLabels[selectedTask.status] }}</span>
+            </div>
             <el-progress :percentage="selectedTask.progress" :stroke-width="7" :status="selectedTask.status === 'completed' ? 'success' : undefined" aria-label="执行进度" />
             <p class="detail-copy">{{ selectedTask.summary }}</p>
             <time class="updated-at" :datetime="selectedTask.updatedAt">更新于 {{ formatDate(selectedTask.updatedAt) }}</time>
@@ -67,6 +62,8 @@ function formatDate(value: string) {
           <section class="panel detail-panel" aria-labelledby="autonomous-trigger-heading">
             <h2 id="autonomous-trigger-heading" class="section-title">任务来源</h2>
             <dl class="task-metadata">
+              <div><dt>任务名称</dt><dd>{{ selectedTask.title }}</dd></div>
+              <div><dt>执行员工</dt><dd>{{ employee.name }}</dd></div>
               <div><dt>触发事件</dt><dd>{{ selectedTask.trigger }}</dd></div>
               <div v-if="selectedTask.ruleName"><dt>执行规则</dt><dd>{{ selectedTask.ruleName }}</dd></div>
               <div v-if="ownerName"><dt>业务负责人</dt><dd>{{ ownerName }}</dd></div>
@@ -78,12 +75,12 @@ function formatDate(value: string) {
           </section>
         </div>
       </template>
-      <el-empty v-else class="panel" description="当前账号无法查看这项自主任务" :image-size="88">
+      <el-empty v-else description="当前账号无法查看这项自主任务" :image-size="88">
         <RouterLink :to="fromOverview ? overviewLink : taskLink()" class="back-link">{{ fromOverview ? '返回任务总览' : '返回自主任务' }}</RouterLink>
       </el-empty>
     </template>
 
-    <ul v-else-if="tasks.length" class="task-list" aria-label="自主任务记录">
+    <ul v-else-if="tasks.length" class="page-body task-list" aria-label="自主任务记录">
       <li v-for="task in tasks" :key="task.id">
         <RouterLink :to="taskLink(task.id)" class="panel task-card" :aria-labelledby="`autonomous-task-${task.id}`">
           <div class="task-card-heading">
@@ -100,23 +97,22 @@ function formatDate(value: string) {
       </li>
     </ul>
 
-    <el-empty v-else class="panel" description="暂无可查看的自主任务" :image-size="88">
+    <el-empty v-else description="暂无可查看的自主任务" :image-size="88">
       <template #image><ListChecks :size="44" class="empty-icon" aria-hidden="true" /></template>
     </el-empty>
   </section>
 </template>
 
 <style scoped>
-.autonomous-navigation { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 14px; color: var(--muted); font-size: 13px; }
+.autonomous-navigation { justify-content: flex-start; color: var(--muted); font-size: 13px; }
 .back-link { display: inline-flex; align-items: center; gap: 6px; color: var(--accent); }
 .back-link:hover { text-decoration: underline; }
-.autonomous-header { align-items: flex-start; flex-wrap: wrap; }
-.autonomous-header h1 { overflow-wrap: anywhere; }
-.task-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 275px), 1fr)); gap: 12px; margin: 0; padding: 0; list-style: none; }
+.task-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 275px), 1fr)); gap: 12px; margin: 0; list-style: none; }
 .task-card { display: flex; flex-direction: column; height: 100%; min-width: 0; gap: 12px; padding: 15px; }
 .task-card:hover { border-color: #a8baf1; }
 .task-card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
 .task-card-heading h2 { min-width: 0; margin: 0; font-size: 15px; line-height: 1.5; overflow-wrap: anywhere; }
+.detail-panel .task-card-heading { margin-bottom: 10px; }
 .task-status { flex: none; border-radius: 6px; padding: 3px 7px; font-size: 12px; font-weight: 600; white-space: nowrap; }
 .task-status.running { background: var(--soft); color: var(--accent); }
 .task-status.review { background: #fff3db; color: #825012; }

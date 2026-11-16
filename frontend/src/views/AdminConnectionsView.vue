@@ -5,9 +5,11 @@ import { ElMessage } from 'element-plus'
 import { ArrowLeft, ArrowUpRight, Cable, Cpu, Pencil, Plus, Power, Search, Server, Zap } from 'lucide-vue-next'
 import { adminCapabilityLink } from '@/adminCatalogs'
 import { useOrganizationAdminStore, type AdminConnection } from '@/stores/organizationAdmin'
+import { useScenarioTaskStore } from '@/stores/scenarioTasks'
 
 const route = useRoute()
 const admin = useOrganizationAdminStore()
+const runtime = useScenarioTaskStore()
 const types: AdminConnection['type'][] = ['模型', 'MCP', '业务系统']
 const statuses: AdminConnection['status'][] = ['正常', '待检测', '已停用']
 const icons = { 模型: Cpu, MCP: Cable, 业务系统: Server }
@@ -24,6 +26,7 @@ const draft = ref<Pick<AdminConnection, 'name' | 'type' | 'endpoint'>>({
 const editorError = ref('')
 const selectedId = computed(() => typeof route.params.id === 'string' ? route.params.id : '')
 const selected = computed(() => admin.connections.find(connection => connection.id === selectedId.value))
+const dependentTasks = computed(() => runtime.adminTasks.filter(task => task.attempts.some(attempt => attempt.connectionId === selectedId.value)))
 
 watch(selectedId, () => {
   editorOpen.value = false
@@ -113,31 +116,28 @@ function toggle(connection: AdminConnection) {
 </script>
 
 <template>
-  <div class="page">
-    <RouterLink v-if="selectedId" class="back-link" to="/admin/connections">
-      <ArrowLeft :size="16" aria-hidden="true" />系统接入
-    </RouterLink>
-
-    <header class="page-header">
-      <div>
-        <h1>{{ selected?.name ?? '系统接入' }}</h1>
-        <p>{{ selected ? selected.type + '连接' : '管理组织模型、MCP 和业务系统的连接。' }}</p>
-      </div>
-      <div v-if="selected" class="page-actions">
+  <div class="page page-surface">
+    <header v-if="selectedId" class="page-controls page-toolbar page-tab-toolbar">
+      <RouterLink class="back-link" to="/admin/connections">
+        <ArrowLeft :size="16" aria-hidden="true" />系统接入
+      </RouterLink>
+      <div v-if="selected" class="page-toolbar-controls">
         <el-button :icon="Pencil" @click="openEditor(selected)">编辑连接</el-button>
         <el-button :icon="Zap" type="primary" :disabled="selected.status === '已停用'" @click="test(selected)">模拟检测</el-button>
       </div>
-      <el-button v-else-if="!selectedId" :icon="Plus" type="primary" @click="openEditor()">添加连接</el-button>
     </header>
 
     <template v-if="selected">
-      <div class="connection-detail">
+      <div class="connection-detail page-body">
         <section class="panel overview">
           <h2 class="section-title">连接信息</h2>
           <dl class="connection-fields">
+            <div><dt>名称</dt><dd>{{ selected.name }}</dd></div>
+            <div><dt>类型</dt><dd>{{ selected.type }}</dd></div>
             <div><dt>状态</dt><dd><el-tag :type="statusType[selected.status]" effect="light" round>{{ selected.status }}</el-tag></dd></div>
             <div><dt>地址</dt><dd class="endpoint">{{ selected.endpoint }}</dd></div>
             <div><dt>最近模拟检测</dt><dd>{{ selected.lastCheckedAt ? formatDate(selected.lastCheckedAt) : '暂无' }}</dd></div>
+            <div v-if="dependentTasks.length"><dt>关联任务</dt><dd><RouterLink class="text-link" :to="{ name: 'admin-scenario-runs', query: { connection: selected.id } }">查看 {{ dependentTasks.length }} 项运行任务 <ArrowUpRight :size="14" aria-hidden="true" /></RouterLink></dd></div>
           </dl>
           <div class="connection-actions">
             <el-button v-if="selected.status === '已停用'" :icon="Power" @click="toggle(selected)">启用连接</el-button>
@@ -163,21 +163,26 @@ function toggle(connection: AdminConnection) {
       </div>
     </template>
 
-    <el-empty v-else-if="selectedId" class="panel" description="连接不存在">
+    <el-empty v-else-if="selectedId" description="连接不存在">
       <RouterLink class="text-link" to="/admin/connections">返回连接列表</RouterLink>
     </el-empty>
 
     <section v-else aria-label="系统连接目录">
-      <div class="filters">
-        <el-input v-model="query" clearable :prefix-icon="Search" aria-label="搜索连接" placeholder="搜索名称或地址" />
-        <el-select v-model="typeFilter" clearable aria-label="连接类型" placeholder="全部类型">
-          <el-option v-for="type in types" :key="type" :label="type" :value="type" />
-        </el-select>
-        <el-select v-model="statusFilter" clearable aria-label="连接状态" placeholder="全部状态">
-          <el-option v-for="status in statuses" :key="status" :label="status" :value="status" />
-        </el-select>
-      </div>
-      <ul v-if="visibleConnections.length" class="connection-grid">
+      <header class="page-controls page-toolbar page-tab-toolbar filters">
+        <div class="page-toolbar-filters">
+          <el-input v-model="query" clearable :prefix-icon="Search" aria-label="搜索连接" placeholder="搜索名称或地址" />
+          <el-select v-model="typeFilter" popper-class="filter-options" clearable aria-label="连接类型" placeholder="全部类型">
+            <el-option v-for="type in types" :key="type" :label="type" :value="type" />
+          </el-select>
+          <el-select v-model="statusFilter" popper-class="filter-options" clearable aria-label="连接状态" placeholder="全部状态">
+            <el-option v-for="status in statuses" :key="status" :label="status" :value="status" />
+          </el-select>
+        </div>
+        <div class="page-toolbar-controls">
+          <el-button :icon="Plus" type="primary" @click="openEditor()">添加连接</el-button>
+        </div>
+      </header>
+      <ul v-if="visibleConnections.length" class="connection-grid page-body">
         <li v-for="connection in visibleConnections" :key="connection.id">
           <RouterLink class="panel connection-card" :to="'/admin/connections/' + encodeURIComponent(connection.id)" :aria-label="'查看' + connection.name">
             <div class="connection-card-header">
@@ -195,7 +200,7 @@ function toggle(connection: AdminConnection) {
           </RouterLink>
         </li>
       </ul>
-      <el-empty v-else class="panel" :description="admin.connections.length ? '没有符合条件的连接' : '还没有系统连接'" :image-size="84" />
+      <el-empty v-else :description="admin.connections.length ? '没有符合条件的连接' : '还没有系统连接'" :image-size="84" />
     </section>
 
     <el-dialog v-model="editorOpen" :title="editingId ? '编辑连接' : '添加连接'" width="min(460px, calc(100vw - 28px))" append-to-body>
@@ -235,15 +240,14 @@ function toggle(connection: AdminConnection) {
 
 <style scoped>
 .back-link, .text-link { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); }
-.back-link { margin-bottom: 13px; font-size: 13px; }
+.back-link { font-size: 13px; }
 .back-link:hover, .text-link:hover { text-decoration: underline; }
-.page-header h1, .connection-title strong, .dependency-title strong { overflow-wrap: anywhere; }
-.page-actions, .connection-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.page-actions .el-button + .el-button { margin-left: 0; }
-.filters { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 16px; }
-.filters .el-input { width: min(100%, 320px); }
-.filters .el-select { width: 126px; }
-.connection-grid, .dependency-list { list-style: none; margin: 0; padding: 0; }
+.connection-title strong, .dependency-title strong, .connection-fields dd { overflow-wrap: anywhere; }
+.connection-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.filters .el-input { width: min(100%, 190px); }
+.filters .el-select { width: 112px; }
+.connection-grid, .dependency-list { list-style: none; margin: 0; }
+.dependency-list { padding: 0; }
 .connection-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 265px), 1fr)); gap: 14px; }
 .connection-grid > li { min-width: 0; }
 .connection-card {
@@ -288,9 +292,6 @@ function toggle(connection: AdminConnection) {
   .connection-detail { grid-template-columns: 1fr; }
 }
 @media (max-width: 700px) {
-  .page-header { flex-wrap: wrap; }
-  .filters .el-input { width: 100%; }
-  .filters .el-select { flex: 1 1 100px; }
   .overview, .dependencies { padding: 13px; }
   .connection-fields > div { grid-template-columns: 88px minmax(0, 1fr); }
 }

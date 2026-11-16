@@ -110,10 +110,15 @@ export function makeSampleState(): PlatformState {
     assistantSharingVersion: 1,
     organizationConnections: makeAdminConnections(),
     organizationChanges: makeAdminChanges(),
+    organizationDepartments: [
+      { id: 'department-delivery', name: '产品与交付', leaderId: 'lin' },
+      { id: 'department-design', name: '设计部', parentId: 'department-delivery' },
+      { id: 'department-service', name: '客户服务', leaderId: 'song' },
+    ],
     users: [
-      { id: 'lin', name: '林知远', role: 'admin', department: '产品与交付', title: '组织管理员', initials: '林' },
-      { id: 'zhou', name: '周可欣', role: 'member', department: '客户服务', title: '普通成员', initials: '周' },
-      { id: 'song', name: '宋予安', role: 'member', department: '客户服务', title: '数字员工负责人', initials: '宋' },
+      { id: 'lin', name: '林知远', role: 'admin', department: '产品与交付', departmentId: 'department-delivery', title: '组织管理员', initials: '林' },
+      { id: 'zhou', name: '周可欣', role: 'member', department: '客户服务', departmentId: 'department-service', title: '普通成员', initials: '周' },
+      { id: 'song', name: '宋予安', role: 'member', department: '客户服务', departmentId: 'department-service', title: 'AI 员工负责人', initials: '宋' },
     ],
     assistants: [
       { id: 'assistant-report', userId: 'lin', scope: 'personal', allowedUserIds: [], name: '报告助理', description: '整理工作材料，撰写周报和汇报初稿。', instructions: '优先给出进展、风险和下一步行动，保留待补充的数据。', resourceIds: ['skill-weekly', 'tool-sheet', 'model-deepseek'] },

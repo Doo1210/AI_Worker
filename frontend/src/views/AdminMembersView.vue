@@ -5,7 +5,9 @@ import { ElDrawer, ElMessage } from 'element-plus'
 import { ArrowLeft, Plus, Search } from '@element-plus/icons-vue'
 import { adminCapabilityLink } from '@/adminCatalogs'
 import { usePlatformStore, type User } from '@/stores/platform'
-import { useOrganizationAdminStore } from '@/stores/organizationAdmin'
+import { capabilityResponsibilities, useOrganizationAdminStore } from '@/stores/organizationAdmin'
+import { organizationRoleLabels } from '@/stores/organizationAdminData'
+import AdminMemberTransferDialog from '@/components/AdminMemberTransferDialog.vue'
 
 const platform = usePlatformStore()
 const organization = useOrganizationAdminStore()
@@ -13,37 +15,46 @@ const route = useRoute()
 const router = useRouter()
 const query = ref('')
 const department = ref('')
+const roleFilter = ref('')
+const statusFilter = ref('')
 const selectedIds = ref<string[]>([])
-const detailMember = computed(() => platform.users.find(member => member.id === route.params.id))
+const detailMember = computed(() => organization.visibleMembers.find(member => member.id === route.params.id))
+const detailTab = ref('profile')
+const transferOpen = ref(false)
+const canEditMember = computed(() => !!detailMember.value && organization.canManageMember(detailMember.value))
 const detailGrants = computed(() => organization.capabilities.filter(capability => capability.memberIds.includes(detailMember.value?.id ?? '')))
 const responsibilities = computed(() => {
   const memberId = detailMember.value?.id
-  return memberId ? organization.capabilities.filter(capability =>
-    capability.maintainerId === memberId || capability.configuratorIds.includes(memberId)) : []
+  return memberId ? organization.capabilities.filter(capability => capabilityResponsibilities(capability, memberId)) : []
 })
-const publications = computed(() => organization.capabilities.filter(capability => capability.publisherIds.includes(detailMember.value?.id ?? '')))
-const departments = computed(() => [...new Set(platform.users.map(member => member.department).filter(Boolean))])
+const departments = computed(() => organization.visibleDepartments)
+const departmentMemberIds = computed(() => department.value ? organization.visibleMembers
+  .filter(member => member.departmentId === department.value && member.status !== 'disabled' && organization.canManageMember(member))
+  .map(member => member.id) : [])
 const members = computed(() => {
   const search = query.value.trim().toLowerCase()
-  return platform.users.filter(member => (!department.value || member.department === department.value)
+  return organization.visibleMembers.filter(member => (!department.value || member.departmentId === department.value)
+    && (!roleFilter.value || member.role === roleFilter.value)
+    && (!statusFilter.value || (member.status ?? 'active') === statusFilter.value)
     && [member.name, member.department, member.title].some(value => value.toLowerCase().includes(search)))
 })
-const visibleIds = computed(() => members.value.map(member => member.id))
+const visibleIds = computed(() => members.value.filter(member => organization.canManageMember(member)).map(member => member.id))
 const allSelected = computed(() => visibleIds.value.length > 0 && visibleIds.value.every(id => selectedIds.value.includes(id)))
 
 const grantOpen = ref(false)
+const isBatch = ref(false)
 const grantMemberIds = ref<string[]>([])
 const grantIds = ref<string[]>([])
 const grantMode = ref<'分配' | '收回'>('分配')
-const isBatch = computed(() => grantMemberIds.value.length > 1)
 const capabilitiesById = computed(() => new Map(organization.capabilities.map(item => [item.id, item])))
-const hasPairedCapabilities = computed(() => organization.capabilities.some(item => item.pairedId))
+const assignable = computed(() => organization.capabilities.filter(item => organization.canAssignCapability(item.id)))
+const hasPairedCapabilities = computed(() => assignable.value.some(item => item.pairedId && organization.canAssignCapability(item.pairedId)))
 const automaticPairs = reactive(new Map<string, string>())
 const explicitlyDeselected = new Set<string>()
 const automaticGrants = computed(() => organization.capabilities.filter(item => automaticPairs.has(item.id)))
 const affected = computed(() => {
   const selected = new Set(grantIds.value)
-  return grantMemberIds.value.reduce((total, memberId) => total + organization.capabilities.filter(item => {
+  return grantMemberIds.value.reduce((total, memberId) => total + assignable.value.filter(item => {
     const hasAccess = item.memberIds.includes(memberId)
     if (!isBatch.value) return hasAccess !== selected.has(item.id)
     return selected.has(item.id) && (grantMode.value === '分配' ? !hasAccess : hasAccess)
@@ -51,9 +62,18 @@ const affected = computed(() => {
 })
 const profileOpen = ref(false)
 const creatingMember = ref(false)
-const profile = reactive({ name: '', department: '', title: '', role: 'member' as User['role'], status: 'active' as NonNullable<User['status']> })
+const profile = reactive({ name: '', departmentId: '', title: '', status: 'active' as NonNullable<User['status']> })
 
-watch([query, department], () => { selectedIds.value = [] })
+watch([query, department, roleFilter, statusFilter], () => { selectedIds.value = [] })
+watch(() => route.query.department, id => {
+  if (route.name === 'admin-members') department.value = typeof id === 'string' && departments.value.some(item => item.id === id) ? id : ''
+}, { immediate: true })
+watch(detailMember, () => {
+  detailTab.value = 'profile'
+  profileOpen.value = false
+  grantOpen.value = false
+  transferOpen.value = false
+})
 watch(grantMode, () => {
   grantIds.value = grantIds.value.filter(id => !automaticPairs.has(id))
   automaticPairs.clear()
@@ -68,12 +88,13 @@ function selectMember(id: string, checked: unknown) {
   selectedIds.value = checked ? [...new Set([...selectedIds.value, id])] : selectedIds.value.filter(value => value !== id)
 }
 
-function openGrants(ids: string[]) {
+function openGrants(ids: string[], batch = false) {
   grantMemberIds.value = [...ids]
+  isBatch.value = batch
   automaticPairs.clear()
   explicitlyDeselected.clear()
-  grantIds.value = ids.length === 1
-    ? organization.capabilities.filter(item => item.memberIds.includes(ids[0] ?? '')).map(item => item.id)
+  grantIds.value = !batch
+    ? assignable.value.filter(item => item.memberIds.includes(ids[0] ?? '')).map(item => item.id)
     : []
   grantMode.value = '分配'
   grantOpen.value = true
@@ -102,7 +123,7 @@ function updateGrantIds(ids: string[]) {
     if (current.has(id)) continue
     explicitlyDeselected.delete(id)
     const pairedId = capabilitiesById.value.get(id)?.pairedId
-    if (!pairedId || next.has(pairedId) || explicitlyDeselected.has(pairedId) || !capabilitiesById.value.has(pairedId)) continue
+    if (!pairedId || next.has(pairedId) || explicitlyDeselected.has(pairedId) || !organization.canAssignCapability(pairedId)) continue
     next.add(pairedId)
     automaticPairs.set(pairedId, id)
   }
@@ -111,29 +132,33 @@ function updateGrantIds(ids: string[]) {
 
 function saveGrants() {
   const selected = new Set(grantIds.value)
-  let changed = false
-  for (const memberId of grantMemberIds.value) {
+  const updates = grantMemberIds.value.map(memberId => {
     const current = organization.capabilities.filter(item => item.memberIds.includes(memberId)).map(item => item.id)
-    const ids = !isBatch.value ? grantIds.value : grantMode.value === '分配'
+    const capabilityIds = !isBatch.value ? [...current.filter(id => !organization.canAssignCapability(id)), ...grantIds.value] : grantMode.value === '分配'
       ? [...new Set([...current, ...grantIds.value])]
       : current.filter(id => !selected.has(id))
-    changed = organization.setMemberCapabilities(memberId, ids) || changed
+    return { memberId, capabilityIds }
+  })
+  if (!organization.setMembersCapabilities(updates)) {
+    ElMessage.warning('无法保存授权，请核对成员和可分配范围')
+    return
   }
-  if (changed) ElMessage.success('使用授权已更新')
+  ElMessage.success('使用授权已更新')
   grantOpen.value = false
+  if (detailMember.value) detailTab.value = 'grants'
 }
 
 function editProfile() {
   const member = detailMember.value
   if (!member) return
   creatingMember.value = false
-  Object.assign(profile, { name: member.name, department: member.department, title: member.title, role: member.role, status: member.status ?? 'active' })
+  Object.assign(profile, { name: member.name, departmentId: member.departmentId ?? '', title: member.title, status: member.status ?? 'active' })
   profileOpen.value = true
 }
 
 function addMember() {
   creatingMember.value = true
-  Object.assign(profile, { name: '', department: '', title: '', role: 'member', status: 'active' })
+  Object.assign(profile, { name: '', departmentId: department.value || departments.value[0]?.id || '', title: '', status: 'active' })
   profileOpen.value = true
 }
 
@@ -141,7 +166,7 @@ function saveProfile() {
   const member = detailMember.value
   const saved = creatingMember.value ? organization.createMember(profile) : member && organization.updateMember(member.id, profile)
   if (!saved) {
-    ElMessage.warning('请确认成员信息与角色设置')
+    ElMessage.warning('请确认成员信息与部门归属')
     return
   }
   profileOpen.value = false
@@ -153,58 +178,89 @@ function accessCount(id: string) {
 }
 
 function showMember(id: string) {
-  void router.push({ name: 'admin-members', params: { id } })
+  void router.push({ name: 'admin-members', params: { id }, query: route.query })
+}
+
+function setDepartment(id: string) {
+  department.value = id
+  void router.replace({ query: { ...route.query, department: id || undefined } })
 }
 </script>
 
 <template>
-  <div class="page members-page">
-    <RouterLink v-if="detailMember" class="member-back" :to="{ name: 'admin-members' }"><el-icon><ArrowLeft /></el-icon>组织与成员</RouterLink>
-    <header class="page-header">
-      <div>
-        <h1>{{ detailMember?.name ?? '组织与成员' }}</h1>
-        <p>{{ detailMember ? [detailMember.department, detailMember.title].filter(Boolean).join(' · ') : '按成员查看和分配组织能力，管理部门归属和组织角色。' }}</p>
-      </div>
-      <div v-if="detailMember" class="member-actions">
-        <el-button @click="editProfile">编辑成员</el-button>
-        <el-button type="primary" @click="openGrants([detailMember.id])">编辑使用授权</el-button>
-      </div>
-      <el-button v-else type="primary" :icon="Plus" @click="addMember">添加成员</el-button>
-    </header>
-
+  <div class="page page-surface members-page" aria-label="成员管理">
     <template v-if="detailMember">
-      <section class="panel member-panel" aria-label="使用授权">
-        <div class="member-section-title"><h2 class="section-title">使用授权</h2><span class="muted">{{ detailGrants.length }} 项</span></div>
+      <header class="page-controls">
+        <div class="page-tabs" role="group" aria-label="成员详情">
+          <button class="page-tab" type="button" :aria-pressed="detailTab === 'profile'" @click="detailTab = 'profile'">基本信息</button>
+          <button class="page-tab" type="button" :aria-pressed="detailTab === 'grants'" @click="detailTab = 'grants'">使用授权 <small>{{ detailGrants.length }}</small></button>
+          <button class="page-tab" type="button" :aria-pressed="detailTab === 'duties'" @click="detailTab = 'duties'">负责维护 <small>{{ responsibilities.length }}</small></button>
+        </div>
+        <div class="page-toolbar page-tab-toolbar">
+          <RouterLink class="member-back" :to="{ name: 'admin-members', params: { id: '' }, query: route.query }"><el-icon><ArrowLeft /></el-icon>成员管理</RouterLink>
+          <div v-if="canEditMember" class="page-toolbar-controls">
+            <el-button @click="editProfile">编辑成员</el-button>
+            <el-button v-if="organization.isAdmin && detailMember.status !== 'disabled'" @click="transferOpen = true">调岗交接</el-button>
+            <el-button v-if="assignable.length" type="primary" @click="openGrants([detailMember.id])">编辑使用授权</el-button>
+          </div>
+        </div>
+      </header>
+      <section v-if="detailTab === 'profile'" class="page-body" aria-label="基本信息">
+        <dl class="member-profile">
+          <div><dt>姓名</dt><dd>{{ detailMember.name }}</dd></div>
+          <div><dt>部门</dt><dd>{{ detailMember.department || '未分配' }}</dd></div>
+          <div><dt>岗位</dt><dd>{{ detailMember.title || '—' }}</dd></div>
+          <div><dt>组织角色</dt><dd>{{ organizationRoleLabels[detailMember.role] }}</dd></div>
+          <div><dt>账号状态</dt><dd>{{ detailMember.status === 'disabled' ? '已停用' : '已启用' }}</dd></div>
+          <div v-if="detailMember.role === 'department-admin'">
+            <dt>管理范围</dt><dd>{{ departments.filter(item => detailMember?.managementDepartmentIds?.includes(item.id)).map(item => item.name).join('、') || '—' }}</dd>
+          </div>
+        </dl>
+      </section>
+      <section v-else-if="detailTab === 'grants'" aria-label="使用授权">
         <div v-for="item in detailGrants" :key="item.id" class="member-detail-row">
-          <RouterLink :to="adminCapabilityLink(item)"><strong>{{ item.name }}</strong><small>{{ item.type }} · 直接分配</small></RouterLink>
+          <div>
+            <RouterLink v-if="organization.isAdmin" :to="adminCapabilityLink(item)"><strong>{{ item.name }}</strong></RouterLink>
+            <strong v-else>{{ item.name }}</strong>
+            <small>{{ item.type }} · 直接分配</small>
+          </div>
           <el-tag :type="detailMember.status === 'disabled' || !item.enabled ? 'info' : item.ready ? 'success' : 'warning'" effect="plain">{{ detailMember.status === 'disabled' ? '账号已停用' : item.enabled ? (item.ready ? '可使用' : '待就绪') : '未启用' }}</el-tag>
         </div>
         <el-empty v-if="!detailGrants.length" description="暂无使用授权" :image-size="58" />
       </section>
-      <section class="panel member-panel member-responsibilities" aria-label="负责维护">
-        <div class="member-section-title"><h2 class="section-title">负责维护</h2><span class="muted">{{ responsibilities.length }} 项</span></div>
+      <section v-else aria-label="负责维护">
         <div v-for="item in responsibilities" :key="item.id" class="member-detail-row">
-          <RouterLink :to="adminCapabilityLink(item)"><strong>{{ item.name }}</strong><small>{{ item.type }}</small></RouterLink>
-          <el-tag effect="plain">配置维护</el-tag>
+          <div>
+            <RouterLink v-if="organization.isAdmin" :to="adminCapabilityLink(item)"><strong>{{ item.name }}</strong></RouterLink>
+            <strong v-else>{{ item.name }}</strong>
+            <small>{{ item.type }}</small>
+          </div>
+          <span class="muted">{{ capabilityResponsibilities(item, detailMember.id) }}</span>
         </div>
         <el-empty v-if="!responsibilities.length" description="暂无负责维护的对象" :image-size="58" />
       </section>
-      <section v-if="publications.length" class="panel member-panel member-responsibilities" aria-label="可发布">
-        <div class="member-section-title"><h2 class="section-title">可发布</h2><span class="muted">{{ publications.length }} 项</span></div>
-        <div v-for="item in publications" :key="item.id" class="member-detail-row">
-          <RouterLink :to="adminCapabilityLink(item)"><strong>{{ item.name }}</strong><small>{{ item.type }}</small></RouterLink>
-          <el-tag effect="plain">版本发布</el-tag>
-        </div>
-      </section>
+      <AdminMemberTransferDialog v-if="organization.isAdmin" v-model="transferOpen" :member="detailMember" />
     </template>
 
-    <section v-else class="panel member-panel" aria-label="组织成员">
-      <div class="member-toolbar">
-        <el-input v-model="query" :prefix-icon="Search" aria-label="搜索成员" placeholder="搜索姓名、部门或岗位" clearable />
-        <el-select v-model="department" aria-label="按部门筛选" placeholder="全部部门" clearable>
-          <el-option v-for="item in departments" :key="item" :label="item" :value="item" />
-        </el-select>
-        <el-button type="primary" :disabled="!selectedIds.length" @click="openGrants(selectedIds)">批量调整授权{{ selectedIds.length ? '（' + selectedIds.length + '）' : '' }}</el-button>
+    <section v-else aria-label="组织成员">
+      <div class="page-toolbar page-tab-toolbar member-toolbar">
+        <div class="page-toolbar-filters">
+          <el-input v-model="query" :prefix-icon="Search" aria-label="搜索成员" placeholder="搜索姓名、部门或岗位" clearable />
+          <el-select :model-value="department" popper-class="filter-options" aria-label="按部门筛选" placeholder="全部部门" clearable @update:model-value="setDepartment">
+            <el-option v-for="item in departments" :key="item.id" :label="item.name" :value="item.id" />
+          </el-select>
+          <el-select v-model="roleFilter" popper-class="filter-options" aria-label="按角色筛选" placeholder="全部角色" clearable>
+            <el-option v-for="(label, role) in organizationRoleLabels" :key="role" :label="label" :value="role" />
+          </el-select>
+          <el-select v-model="statusFilter" popper-class="filter-options" aria-label="按账号状态筛选" placeholder="全部状态" clearable>
+            <el-option label="已启用" value="active" /><el-option label="已停用" value="disabled" />
+          </el-select>
+        </div>
+        <div class="page-toolbar-controls">
+          <el-button v-if="department && assignable.length" :disabled="!departmentMemberIds.length" @click="openGrants(departmentMemberIds, true)">分配给本部门</el-button>
+          <el-button v-if="assignable.length" :disabled="!selectedIds.length" @click="openGrants(selectedIds, true)">批量调整授权{{ selectedIds.length ? '（' + selectedIds.length + '）' : '' }}</el-button>
+          <el-button type="primary" :icon="Plus" @click="addMember">添加成员</el-button>
+        </div>
       </div>
       <div class="member-table">
         <div class="member-row member-head">
@@ -212,13 +268,13 @@ function showMember(id: string) {
           <span>成员</span><span class="member-department">部门</span><span class="member-role">角色</span><span class="member-count">使用授权</span><span>操作</span>
         </div>
         <div v-for="member in members" :key="member.id" class="member-row">
-          <el-checkbox :aria-label="'选择' + member.name" :model-value="selectedIds.includes(member.id)" @change="selectMember(member.id, $event)" />
+          <el-checkbox :aria-label="'选择' + member.name" :disabled="!organization.canManageMember(member)" :model-value="selectedIds.includes(member.id)" @change="selectMember(member.id, $event)" />
           <div class="member-identity">
             <span class="member-avatar" aria-hidden="true">{{ member.initials }}</span>
             <div><strong>{{ member.name }}</strong><small>{{ member.title }}{{ member.status === 'disabled' ? ' · 已停用' : '' }}</small></div>
           </div>
           <span class="member-department">{{ member.department || '—' }}</span>
-          <span class="member-role">{{ member.role === 'admin' ? '组织管理员' : '成员' }}</span>
+          <span class="member-role">{{ organizationRoleLabels[member.role] }}</span>
           <span class="member-count">{{ accessCount(member.id) }} 项</span>
           <el-button link type="primary" :aria-label="'查看' + member.name" @click="showMember(member.id)">查看</el-button>
         </div>
@@ -228,12 +284,13 @@ function showMember(id: string) {
 
     <ElDrawer v-model="grantOpen" :title="isBatch ? '批量调整使用授权' : '编辑使用授权'" size="min(100vw, 500px)" append-to-body>
       <form class="grant-form" @submit.prevent="saveGrants">
-        <p class="muted">成员 · {{ platform.users.filter(member => grantMemberIds.includes(member.id)).map(member => member.name).join('、') }}</p>
+        <p class="muted">成员 · {{ organization.visibleMembers.filter(member => grantMemberIds.includes(member.id)).map(member => member.name).join('、') }}</p>
+        <p v-if="isBatch" class="muted grant-hint">授权直接写入本次所选成员，之后新增或调入的成员需单独分配。</p>
         <el-select v-if="isBatch" v-model="grantMode" aria-label="批量操作">
           <el-option label="分配使用权" value="分配" /><el-option label="收回使用权" value="收回" />
         </el-select>
         <el-select :model-value="grantIds" multiple filterable collapse-tags :max-collapse-tags="3" collapse-tags-tooltip aria-label="选择能力与资源" placeholder="选择能力与资源" @update:model-value="updateGrantIds">
-          <el-option v-for="item in organization.capabilities" :key="item.id" :value="item.id" :label="item.name + ' · ' + item.type + (item.enabled ? '' : ' · 未启用')" />
+          <el-option v-for="item in assignable" :key="item.id" :value="item.id" :label="item.name + ' · ' + item.type + (item.enabled ? '' : ' · 未启用')" />
         </el-select>
         <section v-if="automaticGrants.length" class="grant-companions" aria-label="默认勾选的配套项">
           <p class="muted">默认勾选的配套项</p>
@@ -250,42 +307,44 @@ function showMember(id: string) {
       </form>
     </ElDrawer>
 
-    <el-dialog v-model="profileOpen" :title="creatingMember ? '添加成员' : '编辑成员'" width="min(450px, 94vw)">
+    <el-dialog v-model="profileOpen" :title="creatingMember ? '添加成员' : '编辑成员'" width="min(450px, 94vw)" append-to-body>
       <el-form label-position="top" @submit.prevent="saveProfile">
         <el-form-item label="姓名"><el-input v-model="profile.name" /></el-form-item>
-        <el-form-item label="部门"><el-input v-model="profile.department" /></el-form-item>
-        <el-form-item label="岗位"><el-input v-model="profile.title" /></el-form-item>
-        <el-form-item label="组织角色">
-          <el-select v-model="profile.role" :disabled="detailMember?.id === platform.currentUser.id"><el-option label="组织管理员" value="admin" /><el-option label="成员" value="member" /></el-select>
+        <el-form-item label="部门">
+          <el-select v-if="creatingMember" v-model="profile.departmentId" aria-label="归属部门">
+            <el-option v-for="item in departments" :key="item.id" :label="item.name" :value="item.id" />
+          </el-select>
+          <span v-else>{{ detailMember?.department || '未分配' }}</span>
         </el-form-item>
+        <el-form-item label="岗位"><el-input v-model="profile.title" /></el-form-item>
         <el-form-item v-if="!creatingMember" label="账号状态">
           <el-select v-model="profile.status" :disabled="detailMember?.id === platform.currentUser.id"><el-option label="已启用" value="active" /><el-option label="已停用" value="disabled" /></el-select>
         </el-form-item>
-        <div class="member-actions"><el-button @click="profileOpen = false">取消</el-button><el-button type="primary" native-type="submit" :disabled="!profile.name.trim()">保存成员</el-button></div>
+        <div class="member-actions"><el-button @click="profileOpen = false">取消</el-button><el-button type="primary" native-type="submit" :disabled="!profile.name.trim() || (creatingMember && !profile.departmentId)">保存成员</el-button></div>
       </el-form>
     </el-dialog>
   </div>
 </template>
 
 <style scoped>
-.member-back { display: inline-flex; align-items: center; gap: 5px; margin-bottom: 13px; color: var(--accent); font-size: 13px; }
+.member-back { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); font-size: 13px; }
 .member-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .member-actions .el-button { margin-left: 0; }
-.member-panel { overflow: hidden; }
-.member-toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; padding: 14px 16px; }
-.member-toolbar .el-input { width: min(100%, 280px); }
-.member-toolbar .el-select { width: 145px; }
-.member-toolbar .el-button { margin-left: auto; }
+.member-profile { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(155px, 100%), 1fr)); gap: 10px; margin: 0; }
+.member-profile > div { background: var(--canvas); border-radius: 8px; padding: 12px; overflow-wrap: anywhere; }
+.member-profile dt { color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+.member-profile dd { margin: 0; font-weight: 600; }
+.page-tab small { color: var(--muted); font-size: 12px; }
+.member-toolbar .el-input { width: min(100%, 190px); }
+.member-toolbar .el-select { width: 112px; }
 .member-row { display: grid; grid-template-columns: 28px minmax(120px, 1.4fr) minmax(90px, 1fr) minmax(88px, .8fr) 76px 48px; gap: 12px; align-items: center; min-height: 61px; padding: 8px 16px; border-top: 1px solid var(--line); font-size: 13px; }
 .member-head { min-height: 40px; background: var(--canvas); color: var(--muted); }
 .member-identity { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .member-identity small, .member-detail-row small { display: block; margin-top: 4px; color: var(--muted); font-size: 12px; }
 .member-avatar { display: grid; place-items: center; flex: 0 0 32px; height: 32px; border-radius: 50%; background: var(--soft); color: var(--accent); font-weight: 650; }
-.member-section-title, .member-detail-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 13px 16px; }
-.member-section-title h2 { margin: 0; }
-.member-detail-row { border-top: 1px solid var(--line); }
+.member-detail-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 13px 16px; border-bottom: 1px solid var(--line); }
+.member-detail-row > div { min-width: 0; overflow-wrap: anywhere; }
 .member-detail-row a:hover { color: var(--accent); }
-.member-responsibilities { margin-top: 15px; }
 .grant-form { display: grid; gap: 14px; }
 .grant-form p { margin: 0; }
 .grant-hint { font-size: 12px; }
@@ -297,9 +356,5 @@ function showMember(id: string) {
 @media (max-width: 800px) {
   .member-row { grid-template-columns: 24px minmax(0, 1fr) 65px 42px; gap: 8px; padding-inline: 10px; }
   .member-department, .member-role { display: none; }
-}
-@media (max-width: 540px) {
-  .members-page .page-header { flex-wrap: wrap; }
-  .member-toolbar .el-button { margin-left: 0; }
 }
 </style>

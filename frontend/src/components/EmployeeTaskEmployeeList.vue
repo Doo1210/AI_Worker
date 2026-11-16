@@ -24,8 +24,8 @@ const filteredEmployees = computed(() => {
 
 <template>
   <section class="panel employee-picker" :aria-labelledby="headingId">
-    <h2 :id="headingId">数字员工</h2>
-    <label class="employee-search">
+    <h2 :id="headingId">AI 员工</h2>
+    <label class="filter-search">
       <Search :size="15" aria-hidden="true" />
       <input v-model="search" type="search" aria-label="按姓名或岗位搜索员工" placeholder="搜索姓名或岗位" />
     </label>
@@ -58,29 +58,6 @@ const filteredEmployees = computed(() => {
 <style scoped>
 .employee-picker { min-width: 0; align-self: start; padding: 12px; }
 .employee-picker h2 { margin: 0 0 9px; font-size: 14px; font-weight: 650; }
-.employee-search {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  min-height: 34px;
-  padding: 0 8px;
-  border: 1px solid var(--line);
-  border-radius: 7px;
-  color: var(--muted);
-}
-.employee-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
-.employee-search svg { flex: none; }
-.employee-search input {
-  width: 100%;
-  min-width: 0;
-  padding: 0;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: var(--text);
-  font: inherit;
-  font-size: 13px;
-}
 .employee-options { display: grid; gap: 4px; margin: 9px 0 0; padding: 0; list-style: none; }
 .employee-option {
   display: grid;

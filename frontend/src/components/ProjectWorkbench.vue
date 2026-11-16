@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
-import { ArrowDownRight, Check, ChevronLeft, ChevronRight, Flag, Lightbulb, ListChecks, Plus, Search, Sparkles } from 'lucide-vue-next'
+import { ArrowDownRight, Check, ChevronLeft, ChevronRight, Flag, Lightbulb, Plus, Search, Sparkles } from 'lucide-vue-next'
 import WorkbenchAssistantSelect from '@/components/WorkbenchAssistantSelect.vue'
 import { useWorkbenchAssistant } from '@/workbenchAssistant'
 import { makeId, usePlatformStore } from '@/stores/platform'
@@ -211,30 +211,30 @@ function saveReview() {
 
 <template>
   <section class="pm-workbench" aria-label="项目管理工作台">
-    <header class="pm-top">
-      <div class="pm-brand">
-        <span><ListChecks :size="20" aria-hidden="true" /></span>
-        <div><h1>项目管理工作台</h1><small>{{ today }} · {{ todayGroups.active.length + todayGroups.overdue.length }} 项待办</small></div>
-      </div>
-      <nav class="pm-tabs" aria-label="项目工作区">
-        <button v-for="item in tabs" :key="item.id" type="button" :aria-pressed="tab === item.id" @click="tab = item.id">{{ item.name }}</button>
+    <header class="page-controls">
+      <nav class="page-tabs" aria-label="项目工作区">
+        <button v-for="item in tabs" :key="item.id" class="page-tab" type="button"
+          :aria-pressed="tab === item.id" @click="tab = item.id">{{ item.name }}</button>
       </nav>
-      <button v-if="tab === 'ideas'" class="pm-button pm-primary" type="button" @click="openIdea()"><Plus :size="16" aria-hidden="true" />新建想法</button>
-      <button v-else class="pm-button pm-primary" type="button" @click="openTask()"><Plus :size="16" aria-hidden="true" />新建任务</button>
+
+      <div class="pm-project page-toolbar page-tab-toolbar">
+        <div class="pm-project-context">
+          <label><span>项目</span><select v-model="projectId" aria-label="选择项目"><option v-for="item in projects" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
+          <p v-if="project.goal">{{ project.goal }}</p>
+          <span class="pm-workload"><time :datetime="today">{{ today }}</time> · {{ todayGroups.active.length + todayGroups.overdue.length }} 项待办</span>
+        </div>
+        <div class="page-toolbar-controls">
+          <button v-if="milestone" class="pm-next" type="button" @click="openTask(milestone)">
+            <Flag :size="15" aria-hidden="true" /><span>里程碑 · {{ milestone.title }}</span><time :datetime="milestone.due">{{ milestone.due.slice(5) }}</time>
+          </button>
+          <button class="pm-button" type="button" @click="openProject"><Plus :size="14" aria-hidden="true" />新建项目</button>
+          <button v-if="tab === 'ideas'" class="pm-button pm-primary" type="button" @click="openIdea()"><Plus :size="16" aria-hidden="true" />新建想法</button>
+          <button v-else class="pm-button pm-primary" type="button" @click="openTask()"><Plus :size="16" aria-hidden="true" />新建任务</button>
+        </div>
+      </div>
     </header>
 
-    <div class="pm-project">
-      <div>
-        <label><span>项目</span><select v-model="projectId" aria-label="选择项目"><option v-for="item in projects" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
-        <p v-if="project.goal">{{ project.goal }}</p>
-      </div>
-      <button v-if="milestone" class="pm-next" type="button" @click="openTask(milestone)">
-        <Flag :size="15" aria-hidden="true" /><span>里程碑 · {{ milestone.title }}</span><time :datetime="milestone.due">{{ milestone.due.slice(5) }}</time>
-      </button>
-      <button class="pm-button" type="button" @click="openProject"><Plus :size="14" aria-hidden="true" />新建项目</button>
-    </div>
-
-    <div class="pm-layout">
+    <div class="pm-layout page-body">
       <div class="pm-content">
         <template v-if="tab === 'today'">
           <section class="pm-summary" aria-label="今日任务统计">
@@ -319,10 +319,12 @@ function saveReview() {
         </section>
 
         <section v-else-if="tab === 'tasks'" aria-label="项目任务看板">
-          <div class="pm-board-toolbar">
+          <div class="pm-board-toolbar page-toolbar">
             <h2>任务看板</h2>
-            <label><Search :size="15" aria-hidden="true" /><input v-model="search" type="search" aria-label="搜索项目任务" placeholder="搜索任务或负责人" /></label>
-            <select v-model="priority" aria-label="筛选优先级"><option value="">全部优先级</option><option v-for="(label, id) in priorityLabels" :key="id" :value="id">{{ label }}</option></select>
+            <div class="page-toolbar-filters">
+              <label class="filter-search"><Search :size="15" aria-hidden="true" /><input v-model="search" type="search" aria-label="搜索项目任务" placeholder="搜索任务或负责人" /></label>
+              <select v-model="priority" class="filter-field" aria-label="筛选优先级"><option value="">全部优先级</option><option v-for="(label, id) in priorityLabels" :key="id" :value="id">{{ label }}</option></select>
+            </div>
           </div>
           <div class="pm-board">
             <section v-for="(label, status) in projectStatuses" :key="status" class="pm-column" :aria-label="label">
@@ -341,9 +343,11 @@ function saveReview() {
         </section>
 
         <section v-else aria-label="项目想法池">
-          <div class="pm-board-toolbar">
+          <div class="pm-board-toolbar page-toolbar">
             <h2>想法池</h2>
-            <select v-model="ideaFilter" aria-label="筛选想法状态"><option value="">全部状态</option><option v-for="(label, id) in ideaStatuses" :key="id" :value="id">{{ label }}</option></select>
+            <div class="page-toolbar-filters">
+              <select v-model="ideaFilter" class="filter-field" aria-label="筛选想法状态"><option value="">全部状态</option><option v-for="(label, id) in ideaStatuses" :key="id" :value="id">{{ label }}</option></select>
+            </div>
           </div>
           <div v-if="filteredIdeas.length" class="pm-ideas">
             <article v-for="idea in filteredIdeas" :key="idea.id" class="pm-idea">

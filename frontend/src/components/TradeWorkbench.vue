@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
-import { ArrowDownToLine, ArrowRight, CircleCheck, FileText, Package, Pause, Play, Plus, Printer, RotateCcw, Ship, Sparkles, X } from 'lucide-vue-next'
+import { ArrowDownToLine, ArrowRight, CircleCheck, FileText, Package, Pause, Play, Plus, Printer, RotateCcw, Sparkles, X } from 'lucide-vue-next'
 import { makeId, usePlatformStore } from '@/stores/platform'
 import { useWorkbenchAssistant } from '@/workbenchAssistant'
 import TradeLoadPreview from './TradeLoadPreview.vue'
@@ -226,27 +226,17 @@ function printPackingList() {
 
 <template>
   <section class="trade-workbench" aria-label="外贸工作台">
-    <header class="trade-top">
-      <div class="trade-brand">
-        <span><Ship :size="21" aria-hidden="true" /></span>
-        <h1>外贸工作台</h1>
-      </div>
-      <nav class="trade-nav" aria-label="外贸业务区">
-        <button type="button" :aria-pressed="tab === 'loading'" @click="tab = 'loading'">装柜计算</button>
-        <button type="button" :aria-pressed="tab === 'documents'" @click="tab = 'documents'">外贸单证</button>
+    <header class="page-controls">
+      <nav class="page-tabs" aria-label="外贸业务区">
+        <button class="page-tab" type="button" :aria-pressed="tab === 'loading'" @click="tab = 'loading'">装柜计算</button>
+        <button class="page-tab" type="button" :aria-pressed="tab === 'documents'" @click="tab = 'documents'">外贸单证</button>
       </nav>
-    </header>
-
-    <template v-if="tab === 'loading'">
-      <div class="trade-toolbar">
-        <div class="trade-toolbar-title">
-          <h2>装柜计算</h2>
-          <div class="trade-segment" role="group" aria-label="载具类型">
-            <button type="button" :aria-pressed="vehicle.kind === 'container'" @click="selectKind('container')">集装箱</button>
-            <button type="button" :aria-pressed="vehicle.kind === 'truck'" @click="selectKind('truck')">厢式货车</button>
-          </div>
+      <div v-if="tab === 'loading' || draft.packingList" class="page-toolbar page-tab-toolbar">
+        <div v-if="tab === 'loading'" class="page-segments" role="group" aria-label="载具类型">
+          <button class="page-segment" type="button" :aria-pressed="vehicle.kind === 'container'" @click="selectKind('container')">集装箱</button>
+          <button class="page-segment" type="button" :aria-pressed="vehicle.kind === 'truck'" @click="selectKind('truck')">厢式货车</button>
         </div>
-        <div class="trade-buttons">
+        <div v-if="tab === 'loading'" class="page-toolbar-controls">
           <button class="trade-button" type="button" :disabled="!plan.loaded" @click="playback">
             <Pause v-if="playing" :size="15" aria-hidden="true" /><Play v-else-if="shown < plan.loaded" :size="15" aria-hidden="true" /><RotateCcw v-else :size="15" aria-hidden="true" />
             {{ playing ? '暂停' : shown < plan.loaded ? '继续' : '重播' }}
@@ -255,7 +245,15 @@ function printPackingList() {
           <button class="trade-button" type="button" @click="resetExample">载入示例</button>
           <button class="trade-button trade-primary" type="button" :disabled="dirty || !plan.loaded" @click="generateDocument">生成单据 <ArrowRight :size="16" aria-hidden="true" /></button>
         </div>
+        <div v-else class="page-toolbar-controls">
+          <button type="button" class="trade-button" @click="useDocumentCargo"><Package :size="15" aria-hidden="true" />带回装柜计算</button>
+          <button type="button" class="trade-button" @click="exportPackingList"><ArrowDownToLine :size="15" aria-hidden="true" />下载 CSV</button>
+          <button type="button" class="trade-button trade-primary" @click="printPackingList"><Printer :size="15" aria-hidden="true" />打印装箱单</button>
+        </div>
       </div>
+    </header>
+
+    <template v-if="tab === 'loading'">
       <div class="trade-layout">
         <aside class="trade-manifest" aria-label="柜型与货物">
           <section class="trade-vehicle-panel">
@@ -363,14 +361,6 @@ function printPackingList() {
     </template>
 
     <template v-else>
-      <div class="trade-toolbar">
-        <h2>外贸单证</h2>
-        <div v-if="draft.packingList" class="trade-buttons">
-          <button type="button" class="trade-button" @click="useDocumentCargo"><Package :size="15" aria-hidden="true" />带回装柜计算</button>
-          <button type="button" class="trade-button" @click="exportPackingList"><ArrowDownToLine :size="15" aria-hidden="true" />下载 CSV</button>
-          <button type="button" class="trade-button trade-primary" @click="printPackingList"><Printer :size="15" aria-hidden="true" />打印装箱单</button>
-        </div>
-      </div>
       <div v-if="draft.packingList" class="trade-docs">
         <aside class="trade-doc-form" aria-label="装箱单信息">
           <div class="trade-section-heading"><h3><FileText :size="16" aria-hidden="true" />装箱单</h3><small>草稿</small></div>

@@ -3,7 +3,7 @@ import { defineStore } from 'pinia'
 import { makeId, nowIso, usePlatformStore, type Assistant, type Employee, type Resource, type User, type Workbench } from './platform'
 import {
   activeCapabilityVersion, activeConfiguration, capabilityConnectionId, capabilityVersions, captureCapabilityVersion,
-  connectionIsReady, type AdminChange, type AdminConnection,
+  connectionIsReady, organizationRoleLabels, type AdminChange, type AdminConnection, type OrganizationDepartment,
 } from './organizationAdminData'
 
 export type { AdminChange, AdminConnection } from './organizationAdminData'
@@ -11,7 +11,7 @@ export type { AdminChange, AdminConnection } from './organizationAdminData'
 export interface AdminCapability {
   id: string
   name: string
-  type: '组织助理' | '数字员工' | '工作台' | Resource['type']
+  type: '组织助理' | 'AI 员工' | '工作台' | Resource['type']
   description: string
   enabled: boolean
   ready: boolean
@@ -27,13 +27,30 @@ export interface AdminCapability {
   usage?: { label: string; value: string; detail?: string }
 }
 
+export function capabilityResponsibilities(capability: AdminCapability, memberId: string) {
+  return [
+    capability.maintainerId === memberId && (capability.type === 'AI 员工' ? '主要负责人' : '维护负责人'),
+    capability.configuratorIds.includes(memberId) && '共同负责人',
+    capability.publisherIds.includes(memberId) && '版本发布',
+  ].filter(Boolean).join(' · ')
+}
+
 type Target =
   | { kind: 'assistant'; item: Assistant }
   | { kind: 'employee'; item: Employee }
   | { kind: 'workbench'; item: Workbench }
   | { kind: 'resource'; item: Resource }
 
-type MemberDraft = Pick<User, 'name' | 'department' | 'title' | 'role' | 'status'>
+type MemberDraft = Pick<User, 'name' | 'title' | 'status'> & { departmentId: string }
+type DepartmentDraft = Omit<OrganizationDepartment, 'id'>
+type MemberRoleDraft = Pick<User, 'role' | 'managementDepartmentIds' | 'assignableCapabilityIds'>
+interface MemberTransfer {
+  departmentId: string
+  title: string
+  revokeIds: string[]
+  handoverIds: string[]
+  successorId: string
+}
 type ConnectionDraft = Pick<AdminConnection, 'name' | 'type' | 'endpoint'>
 
 const sampleUsage: Record<string, NonNullable<AdminCapability['usage']>> = {
@@ -69,7 +86,7 @@ function isEnabled(target: Target) {
 function targetType(target: Target): AdminCapability['type'] {
   switch (target.kind) {
     case 'assistant': return '组织助理'
-    case 'employee': return '数字员工'
+    case 'employee': return 'AI 员工'
     case 'workbench': return '工作台'
     case 'resource': return target.item.type
   }
@@ -89,6 +106,13 @@ function configuresEmployee(employee: Employee, memberId: string) {
   return employee.ownerId === memberId || !!employee.configuratorIds?.includes(memberId)
 }
 
+function employeeMaintenancePermissions(employee: Employee, memberId: string) {
+  return {
+    canConfigure: configuresEmployee(employee, memberId),
+    canPublish: employee.publisherIds?.includes(memberId) ?? false,
+  }
+}
+
 function validEndpoint(endpoint: string) {
   try {
     const url = new URL(endpoint)
@@ -105,6 +129,22 @@ function sameIds(left: string[], right: string[]) {
 export const useOrganizationAdminStore = defineStore('organization-admin', () => {
   const platform = usePlatformStore()
   const isAdmin = computed(() => platform.currentUser.role === 'admin')
+  const departments = computed(() => platform.organizationDepartments)
+  const managedDepartmentIds = computed(() => new Set(departments.value
+    .filter(department => platform.currentUser.role === 'department-admin'
+      && platform.currentUser.managementDepartmentIds?.includes(department.id))
+    .map(department => department.id)))
+  const canOpenAdmin = computed(() => isAdmin.value || managedDepartmentIds.value.size > 0)
+  const visibleDepartments = computed(() => departments.value.filter(department => canViewDepartment(department.id)))
+  const visibleMembers = computed(() => platform.users.filter(member => canViewDepartment(member.departmentId)))
+  const myEmployeeMaintenance = computed(() => {
+    const permissions = new Map<string, ReturnType<typeof employeeMaintenancePermissions>>()
+    for (const employee of platform.employees) {
+      const grant = employeeMaintenancePermissions(employee, platform.currentUser.id)
+      if (grant.canConfigure || grant.canPublish) permissions.set(employee.id, grant)
+    }
+    return permissions
+  })
   const targets = computed<Target[]>(() => [
     ...platform.assistants.filter(item => item.scope === 'organization').map(item => ({ kind: 'assistant' as const, item })),
     ...platform.employees.map(item => ({ kind: 'employee' as const, item })),
@@ -151,6 +191,18 @@ export const useOrganizationAdminStore = defineStore('organization-admin', () =>
     return targets.value.find(target => target.item.id === id)
   }
 
+  function canViewDepartment(id?: string) {
+    return isAdmin.value || (id !== undefined && managedDepartmentIds.value.has(id))
+  }
+
+  function canManageMember(member: User) {
+    return isAdmin.value || (member.role === 'member' && canViewDepartment(member.departmentId))
+  }
+
+  function canAssignCapability(id: string) {
+    return isAdmin.value || (managedDepartmentIds.value.size > 0 && !!platform.currentUser.assignableCapabilityIds?.includes(id))
+  }
+
   function pairedTarget(target: Target) {
     if (target.kind === 'workbench') {
       const assistantId = target.item.pairedAssistantId
@@ -182,8 +234,7 @@ export const useOrganizationAdminStore = defineStore('organization-admin', () =>
       .map(member => ({
         id: member.id,
         name: member.name,
-        canConfigure: configuresEmployee(employee, member.id),
-        canPublish: employee.publisherIds?.includes(member.id) ?? false,
+        ...employeeMaintenancePermissions(employee, member.id),
       }))
       .filter(member => member.canConfigure || member.canPublish)
   }
@@ -267,9 +318,15 @@ export const useOrganizationAdminStore = defineStore('organization-admin', () =>
     return true
   }
 
-  function setMemberCapabilities(memberId: string, capabilityIds: string[]) {
+  function canSetMemberCapabilities(memberId: string, capabilityIds: string[]) {
     const member = platform.users.find(user => user.id === memberId)
-    if (!isAdmin.value || !member || capabilityIds.some(id => !findTarget(id))) return false
+    if (!member || !canManageMember(member) || capabilityIds.some(id => !findTarget(id))) return false
+    const requested = new Set(capabilityIds)
+    return targets.value.every(({ item }) =>
+      canAssignCapability(item.id) || (item.allowedUserIds?.includes(memberId) ?? false) === requested.has(item.id))
+  }
+
+  function applyMemberCapabilities(memberId: string, capabilityIds: string[]) {
     const requested = new Set(capabilityIds)
     const previous: string[] = []
     const next: string[] = []
@@ -284,7 +341,12 @@ export const useOrganizationAdminStore = defineStore('organization-admin', () =>
       item.allowedUserIds = hasAccess ? [...ids, memberId] : ids.filter(id => id !== memberId)
       changed = true
     }
-    if (changed) record('分配使用权', member.name, previous.join('、') || '无', next.join('、') || '无')
+    if (changed) record('分配使用权', memberLabel([memberId]), previous.join('、') || '无', next.join('、') || '无')
+  }
+
+  function setMembersCapabilities(updates: { memberId: string; capabilityIds: string[] }[]) {
+    if (!updates.every(({ memberId, capabilityIds }) => canSetMemberCapabilities(memberId, capabilityIds))) return false
+    for (const { memberId, capabilityIds } of updates) applyMemberCapabilities(memberId, capabilityIds)
     return true
   }
 
@@ -427,19 +489,50 @@ export const useOrganizationAdminStore = defineStore('organization-admin', () =>
     return true
   }
 
-  function memberSummary(member: MemberDraft) {
+  function memberSummary(member: User) {
     return [
-      member.name, member.department, member.title, member.role === 'admin' ? '组织管理员' : '成员',
+      member.name, member.department, member.title, organizationRoleLabels[member.role],
       member.status === 'disabled' ? '已停用' : '正常',
     ].filter(Boolean).join(' · ')
   }
 
+  function departmentSummary(department: OrganizationDepartment) {
+    const parent = departments.value.find(item => item.id === department.parentId)
+    return [department.name, parent?.name ?? '直属部门', memberLabel(department.leaderId ? [department.leaderId] : [])].join(' · ')
+  }
+
+  function saveDepartment(draft: DepartmentDraft, id?: string) {
+    const name = draft.name.trim()
+    const current = departments.value.find(department => department.id === id)
+    const parent = departments.value.find(department => department.id === draft.parentId)
+    if (!isAdmin.value || !name || (id && !current) || (draft.parentId && !parent)
+      || departments.value.some(department => department.id !== id && department.name === name)) return false
+    for (let ancestor = parent; ancestor; ancestor = departments.value.find(department => department.id === ancestor?.parentId)) {
+      if (ancestor.id === id) return false
+    }
+    if (draft.leaderId && (!id || !platform.users.some(member =>
+      member.id === draft.leaderId && member.departmentId === id && member.status !== 'disabled'))) return false
+    const fields = { name, parentId: parent?.id, leaderId: draft.leaderId || undefined }
+    if (current) {
+      const before = departmentSummary(current)
+      Object.assign(current, fields)
+      for (const member of platform.users.filter(member => member.departmentId === id)) member.department = name
+      const after = departmentSummary(current)
+      if (before !== after) record('更新部门', name, before, after)
+    } else {
+      const department = { ...fields, id: makeId('department') }
+      departments.value.push(department)
+      record('新增部门', name, '无', departmentSummary(department))
+    }
+    return true
+  }
+
   function createMember(fields: MemberDraft) {
     const name = fields.name.trim()
-    const department = fields.department.trim()
-    if (!isAdmin.value || !name || !department || !['admin', 'member'].includes(fields.role)) return false
+    const department = departments.value.find(item => item.id === fields.departmentId)
+    if (!name || !department || !canViewDepartment(department.id)) return false
     const member: User = {
-      id: makeId('member'), name, department, role: fields.role,
+      id: makeId('member'), name, department: department.name, departmentId: department.id, role: 'member',
       title: fields.title.trim(), initials: Array.from(name)[0]!, status: 'active',
     }
     platform.users.push(member)
@@ -447,33 +540,91 @@ export const useOrganizationAdminStore = defineStore('organization-admin', () =>
     return true
   }
 
-  function updateMember(id: string, fields: Partial<MemberDraft>) {
+  function updateMember(id: string, fields: Omit<MemberDraft, 'departmentId'>) {
     const member = platform.users.find(user => user.id === id)
-    if (!isAdmin.value || !member) return false
-    if (id === platform.currentUser.id && (fields.status === 'disabled' || fields.role === 'member')) return false
-    const updated = {
-      name: fields.name?.trim() ?? member.name,
-      department: fields.department?.trim() ?? member.department,
-      title: fields.title?.trim() ?? member.title,
-      role: fields.role ?? member.role,
-      status: fields.status ?? member.status ?? 'active',
-    }
-    if (!updated.name || !updated.department || !['admin', 'member'].includes(updated.role)
-      || !['active', 'disabled'].includes(updated.status)) return false
+    if (!member || !canManageMember(member) || (id === platform.currentUser.id && fields.status === 'disabled')) return false
+    const name = fields.name.trim()
+    const status = fields.status ?? 'active'
+    if (!name || !['active', 'disabled'].includes(status)) return false
     const previous = memberSummary(member)
-    const next = memberSummary(updated)
-    if (previous !== next) {
-      Object.assign(member, updated, { initials: Array.from(updated.name)[0]! })
-      record('更新成员', member.name, previous, next)
+    Object.assign(member, { name, initials: Array.from(name)[0]!, title: fields.title.trim(), status })
+    if (status === 'disabled') clearDepartmentLeader(member)
+    const next = memberSummary(member)
+    if (previous !== next) record('更新成员', member.name, previous, next)
+    return true
+  }
+
+  function clearDepartmentLeader(member: User) {
+    const department = departments.value.find(item => item.id === member.departmentId && item.leaderId === member.id)
+    if (!department) return
+    const before = departmentSummary(department)
+    delete department.leaderId
+    record('调整部门负责人', department.name, before, departmentSummary(department))
+  }
+
+  function updateMemberRole(id: string, draft: MemberRoleDraft) {
+    const member = platform.users.find(user => user.id === id)
+    if (!isAdmin.value || !member || member.id === platform.currentUser.id || member.status === 'disabled'
+      || !Object.hasOwn(organizationRoleLabels, draft.role)) return false
+    const scope = draft.role === 'department-admin' ? [...new Set(draft.managementDepartmentIds)] : []
+    const grants = draft.role === 'department-admin' ? [...new Set(draft.assignableCapabilityIds)] : []
+    if ((draft.role === 'department-admin' && !scope.length)
+      || scope.some(departmentId => !departments.value.some(department => department.id === departmentId))
+      || grants.some(capabilityId => !findTarget(capabilityId))) return false
+    const summary = () => [
+      organizationRoleLabels[member.role],
+      ...(member.role === 'department-admin' ? [
+        departments.value.filter(department => member.managementDepartmentIds?.includes(department.id)).map(department => department.name).join('、'),
+        capabilities.value.filter(capability => member.assignableCapabilityIds?.includes(capability.id)).map(capability => capability.name).join('、') || '无可分配能力',
+      ] : []),
+    ].join(' · ')
+    const previous = summary()
+    Object.assign(member, { role: draft.role, managementDepartmentIds: scope, assignableCapabilityIds: grants })
+    const next = summary()
+    if (previous !== next) record('调整管理角色', member.name, previous, next)
+    return true
+  }
+
+  function transferMember(id: string, draft: MemberTransfer) {
+    const member = platform.users.find(user => user.id === id)
+    const department = departments.value.find(item => item.id === draft.departmentId)
+    if (!isAdmin.value || !member || !department || department.id === member.departmentId || member.status === 'disabled') return false
+    const successor = platform.users.find(user => user.id === draft.successorId && user.id !== id && user.status !== 'disabled')
+    if (draft.handoverIds.length && !successor) return false
+    const granted = capabilities.value.filter(item => item.memberIds.includes(id))
+    const handovers = capabilities.value.filter(item => draft.handoverIds.includes(item.id) && capabilityResponsibilities(item, id))
+    if (!draft.revokeIds.every(capabilityId => granted.some(item => item.id === capabilityId))
+      || !draft.handoverIds.every(capabilityId => handovers.some(item => item.id === capabilityId))) return false
+
+    const before = memberSummary(member)
+    if (successor) {
+      for (const item of handovers) {
+        if (item.maintainerId === id) setCapabilityMaintainer(item.id, successor.id)
+        if (item.configuratorIds.includes(id)) {
+          setEmployeeConfigurators(item.id, [...item.configuratorIds.filter(memberId => memberId !== id), successor.id])
+        }
+        if (item.publisherIds.includes(id)) {
+          setCapabilityPublishers(item.id, [...item.publisherIds.filter(memberId => memberId !== id), successor.id])
+        }
+      }
     }
+    if (draft.revokeIds.length) applyMemberCapabilities(id, granted.filter(item => !draft.revokeIds.includes(item.id)).map(item => item.id))
+    clearDepartmentLeader(member)
+    Object.assign(member, { departmentId: department.id, department: department.name, title: draft.title.trim() })
+    const details = [memberSummary(member)]
+    if (draft.revokeIds.length) details.push(`收回 ${draft.revokeIds.length} 项使用授权`)
+    if (handovers.length && successor) details.push(`${handovers.length} 项职责交给 ${successor.name}`)
+    record('调岗交接', member.name, before, details.join(' · '))
     return true
   }
 
   return {
-    capabilities, connections, changes,
+    capabilities, connections, changes, myEmployeeMaintenance,
     canConfigureCapability, canPublishCapability, employeeResponsibles, prepareCapabilityEdit, setCapabilityPublishers, publishCapability,
     setEmployeeConfigurators,
-    setCapabilityMembers, setCapabilityPair, setMemberCapabilities, setCapabilityEnabled, setCapabilityVersion, setCapabilityMaintainer,
+    setCapabilityMembers, setCapabilityPair, setMembersCapabilities, setCapabilityEnabled, setCapabilityVersion, setCapabilityMaintainer,
     setCapabilityConnection, saveConnection, testConnection, setConnectionEnabled, createMember, updateMember,
+    departments, visibleDepartments, visibleMembers, isAdmin, canOpenAdmin, canManageMember, canAssignCapability,
+    saveDepartment, updateMemberRole, transferMember,
   }
 })

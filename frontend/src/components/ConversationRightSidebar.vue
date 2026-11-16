@@ -11,7 +11,6 @@ export interface SidebarLayout {
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { Compass, FileText, FolderOpen, Globe, Maximize2, Minimize2, PanelRightClose, Plus, Terminal, X } from 'lucide-vue-next'
-import { ElMessage } from 'element-plus'
 import { usePlatformStore, type Conversation } from '@/stores/platform'
 import ConversationFileTree from './ConversationFileTree.vue'
 import ConversationSidebarBrowser from './ConversationSidebarBrowser.vue'
@@ -23,6 +22,7 @@ const emit = defineEmits<{
   close: []
   expand: []
   reference: [id: string]
+  editArtifact: [id: string]
 }>()
 const store = usePlatformStore()
 const tabStrip = ref<HTMLElement>()
@@ -37,6 +37,8 @@ const filesById = computed(() => new Map(store.myFiles.map(file => [file.id, fil
 const artifactsById = computed(() => new Map(artifacts.value.map(message => [message.id, message])))
 const activeFile = computed(() => props.layout.active.startsWith('file:') ? filesById.value.get(props.layout.active.slice(5)) : undefined)
 const activeArtifact = computed(() => props.layout.active.startsWith('artifact:') ? artifactsById.value.get(props.layout.active.slice(9)) : undefined)
+const savedArtifact = computed(() => activeArtifact.value ? filesById.value.get('artifact-' + activeArtifact.value.id) : undefined)
+const previewText = computed(() => activeFile.value?.content ?? savedArtifact.value?.content ?? activeArtifact.value?.artifactContent ?? activeArtifact.value?.text)
 
 watch([() => props.layout.active, () => props.layout.open], () => {
   if (props.layout.open) {
@@ -47,7 +49,10 @@ watch([() => props.layout.active, () => props.layout.open], () => {
 function tabLabel(tab: SidebarTab) {
   if (tab === 'guide') return '引导'
   if (tab.startsWith('file:')) return filesById.value.get(tab.slice(5))?.name ?? '文件'
-  if (tab.startsWith('artifact:')) return artifactsById.value.get(tab.slice(9))?.artifactName ?? '产物'
+  if (tab.startsWith('artifact:')) {
+    const id = tab.slice(9)
+    return filesById.value.get('artifact-' + id)?.name ?? artifactsById.value.get(id)?.artifactName ?? '产物'
+  }
   return tools.find(tool => tool.id === tab)?.label ?? ''
 }
 
@@ -79,13 +84,6 @@ function closeTab(tab: SidebarTab) {
 
 function openFile(id: string) {
   if (filesById.value.has(id)) openTab(`file:${id}`)
-}
-
-function saveArtifact(id: string) {
-  if (!props.conversation) return
-  const fileId = store.saveMessageFile(props.conversation.id, id)
-  if (fileId) ElMessage.success('已保存到个人工作空间')
-  else ElMessage.error('暂时无法保存此产物')
 }
 
 function downloadFile() {
@@ -159,7 +157,7 @@ defineExpose({ openFile, focusClose })
         <div v-if="artifacts.length" class="sidebar-artifacts">
           <h3>会话产物</h3>
           <button v-for="item in artifacts" :key="item.id" type="button" @click="openTab(`artifact:${item.id}`)">
-            <FileText :size="15" aria-hidden="true" /><span>{{ item.artifactName }}</span>
+            <FileText :size="15" aria-hidden="true" /><span>{{ tabLabel(`artifact:${item.id}`) }}</span>
           </button>
         </div>
       </div>
@@ -169,7 +167,7 @@ defineExpose({ openFile, focusClose })
 
       <div v-if="activeFile || activeArtifact" class="document-preview">
         <div class="preview-bar">
-          <h2>{{ activeFile?.name ?? activeArtifact?.artifactName }}</h2>
+          <h2>{{ activeFile?.name ?? savedArtifact?.name ?? activeArtifact?.artifactName }}</h2>
           <div class="preview-actions">
             <template v-if="activeFile">
               <el-button text size="small" @click="downloadFile">下载</el-button>
@@ -179,13 +177,12 @@ defineExpose({ openFile, focusClose })
               v-else-if="activeArtifact"
               text
               size="small"
-              :disabled="filesById.has('artifact-' + activeArtifact.id)"
-              @click="saveArtifact(activeArtifact.id)"
-            >{{ filesById.has('artifact-' + activeArtifact.id) ? '已保存' : '保存产物' }}</el-button>
+              @click="emit('editArtifact', activeArtifact.id)"
+            >{{ savedArtifact ? '查看已保存产物' : '编辑与保存' }}</el-button>
           </div>
         </div>
         <img v-if="activeFile?.type === 'image' && activeFile.dataUrl" class="preview-image" :src="activeFile.dataUrl" :alt="activeFile.name" />
-        <pre v-else-if="activeFile?.content || activeArtifact?.text" class="preview-text">{{ activeFile?.content || activeArtifact?.text }}</pre>
+        <pre v-else-if="previewText" class="preview-text">{{ previewText }}</pre>
         <p v-else class="preview-note">可下载后查看此文件。</p>
       </div>
       <p v-else-if="layout.active.startsWith('file:') || layout.active.startsWith('artifact:')" class="preview-note">此文件已不可用。</p>

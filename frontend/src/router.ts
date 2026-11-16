@@ -16,6 +16,7 @@ export function makeRouter(pinia: Pinia) {
       { path: '/work/assistants', component: () => import('@/views/AssistantsView.vue') },
       { path: '/work/assistants/manage', name: 'assistant-management', component: () => import('@/views/AdminAssistantsView.vue') },
       { path: '/work/workspace', component: () => import('@/views/WorkspaceView.vue') },
+      { path: '/work/automations', name: 'personal-automations', component: () => import('@/views/PersonalAutomationsView.vue') },
       { path: '/work/resources', component: () => import('@/views/ResourcesView.vue') },
       { path: '/work/resources/manage/:id?', name: 'resource-management', component: () => import('@/views/AdminView.vue') },
       { path: '/work/workbenches/:id?', name: 'workbench', component: () => import('@/views/WorkbenchView.vue') },
@@ -23,15 +24,19 @@ export function makeRouter(pinia: Pinia) {
       { path: '/employees/overview', name: 'employee-task-overview', component: () => import('@/views/EmployeeTaskOverviewView.vue') },
       { path: '/employees/tasks', name: 'employee-tasks', component: () => import('@/views/EmployeeTasksView.vue') },
       { path: '/employees/tasks/:taskId', name: 'employee-task', component: () => import('@/views/EmployeeTasksView.vue') },
+      { path: '/employees/scenario-tasks/:taskId', name: 'scenario-task', component: () => import('@/views/ScenarioTaskView.vue') },
       { path: '/employees/manage/:id?', name: 'employee-management', component: () => import('@/views/AdminView.vue') },
       { path: '/employees/:id/autonomous-tasks', name: 'employee-autonomous-tasks', component: () => import('@/views/EmployeeAutonomousTasksView.vue') },
       { path: '/employees/:id', name: 'employee-contact', component: () => import('@/views/EmployeesView.vue') },
       { path: '/admin/members/:id?', name: 'admin-members', component: () => import('@/views/AdminMembersView.vue') },
+      { path: '/admin/departments', name: 'admin-departments', component: () => import('@/views/AdminDepartmentsView.vue') },
+      { path: '/admin/roles', name: 'admin-roles', component: () => import('@/views/AdminRolesView.vue') },
       { path: '/admin/workbenches/:id?', name: 'admin-workbenches', component: adminCatalogView },
       { path: '/admin/employees/:id?', name: 'admin-employees', component: adminCatalogView },
       { path: '/admin/resources/:id?', name: 'admin-resources', component: adminCatalogView },
       { path: '/admin/capabilities/:id?', name: 'admin-capabilities', component: adminCatalogView },
       { path: '/admin/connections/:id?', name: 'admin-connections', component: () => import('@/views/AdminConnectionsView.vue') },
+      { path: '/admin/runs', name: 'admin-scenario-runs', component: () => import('@/views/AdminScenarioRunsView.vue') },
       { path: '/admin/changes', name: 'admin-changes', component: () => import('@/views/AdminChangesView.vue') },
       { path: '/admin/:section?/:id?', name: 'admin-legacy', component: () => import('@/views/AdminMembersView.vue') },
       { path: '/:pathMatch(.*)*', redirect: '/work/chat' },
@@ -54,11 +59,25 @@ export function makeRouter(pinia: Pinia) {
     const store = usePlatformStore(pinia)
     const organization = useOrganizationAdminStore(pinia)
     const admin = store.currentUser.role === 'admin'
+    if (to.path === '/work/workspace' && to.query.scope !== 'shared') {
+      const { folder, file, ...other } = to.query
+      if (folder !== undefined && !store.myFolders.some(item => item.id === folder)) {
+        return { path: to.path, query: other, replace: true }
+      }
+      if (file !== undefined && !store.myFiles.some(item => item.id === file && item.folderId === folder)) {
+        return { path: to.path, query: { ...other, folder }, replace: true }
+      }
+    }
     if (to.path.startsWith('/admin')) {
-      if (to.name === 'admin-employees' && !admin && store.canManage) {
+      if (to.name === 'admin-employees' && !admin && organization.myEmployeeMaintenance.size) {
         return { name: 'employee-management', params: { id: to.params.id }, replace: true }
       }
-      if (!admin) return '/work/chat'
+      if (!admin) {
+        if (!organization.canOpenAdmin) return '/work/chat'
+        if (to.name === 'admin-departments') return true
+        if (to.name === 'admin-members' && (!to.params.id || organization.visibleMembers.some(member => member.id === to.params.id))) return true
+        return { name: 'admin-members', replace: true }
+      }
 
       if (to.name === 'admin-legacy' && to.params.section !== 'assistants') {
         return { name: 'admin-members', replace: true }
@@ -80,16 +99,26 @@ export function makeRouter(pinia: Pinia) {
       return true
     }
     if (to.name === 'employee-directory' && 'tab' in to.query) {
-      const name = to.query.tab === 'responsible' && store.canManage ? 'employee-management' : 'employee-directory'
+      const name = to.query.tab === 'responsible' && (admin || organization.myEmployeeMaintenance.size)
+        ? 'employee-management' : 'employee-directory'
       return { name, query: { q: to.query.q }, replace: true }
     }
-    const developmentType = to.name === 'employee-management' ? '数字员工' : to.name === 'assistant-management' ? '组织助理' : undefined
+    if (to.name === 'employee-management') {
+      const id = typeof to.params.id === 'string' ? to.params.id : ''
+      const maintenance = organization.myEmployeeMaintenance
+      if (id && admin && to.query.from === 'admin') return true
+      if (id ? maintenance.has(id) : admin || maintenance.size > 0) return true
+      return admin || maintenance.size
+        ? { name: 'employee-management', params: { id: '' }, replace: true }
+        : { name: 'employee-directory', replace: true }
+    }
+    const developmentType = to.name === 'assistant-management' ? '组织助理' : undefined
     if (!admin && (developmentType || to.name === 'resource-management')) {
       const allowed = organization.capabilities.some(item =>
-        (developmentType ? item.type === developmentType : !['数字员工', '组织助理', '工作台'].includes(item.type))
+        (developmentType ? item.type === developmentType : !['AI 员工', '组织助理', '工作台'].includes(item.type))
         && (organization.canConfigureCapability(item.id) || organization.canPublishCapability(item.id)),
       )
-      if (!allowed) return developmentType === '数字员工' ? '/employees' : developmentType === '组织助理' ? '/work/assistants' : '/work/resources'
+      if (!allowed) return developmentType ? '/work/assistants' : '/work/resources'
     }
     return true
   })

@@ -16,7 +16,7 @@ const organization = useOrganizationAdminStore()
 const isAdmin = computed(() => platform.currentUser.role === 'admin')
 
 const typeIcons = {
-  组织助理: Sparkles, 数字员工: Bot, 工作台: LayoutGrid, 模型: Cpu,
+  组织助理: Sparkles, 'AI 员工': Bot, 工作台: LayoutGrid, 模型: Cpu,
   技能: Wrench, MCP: Plug, 知识: BookOpen, 工具: Wrench,
 }
 const connectionTypes: Partial<Record<AdminCapability['type'], AdminConnection['type']>> = {
@@ -71,7 +71,7 @@ const developmentLink = computed(() => {
   const item = selected.value
   if (!item || !organization.canConfigureCapability(item.id)) return undefined
   if (item.type === '组织助理') return { path: '/work/assistants/manage', query: { assistant: item.id } }
-  if (item.type === '数字员工') return { path: '/employees/manage/' + encodeURIComponent(item.id) }
+  if (item.type === 'AI 员工') return { name: 'employee-management', params: { id: item.id }, query: { from: 'admin' } }
   if (item.type !== '工作台') return { path: '/work/resources/manage/' + encodeURIComponent(item.id) }
 })
 
@@ -201,34 +201,34 @@ function saveActivation() {
 </script>
 
 <template>
-  <div class="page capabilities-page">
-    <el-empty v-if="!isAdmin" class="panel" description="当前账号没有管理权限" />
+  <div class="page page-surface capabilities-page">
+    <el-empty v-if="!isAdmin" description="当前账号没有管理权限" />
     <template v-else-if="!route.params.id">
-      <header class="page-header">
-        <div>
-          <h1>{{ catalog.title }}</h1>
-          <p>{{ catalog.description }}</p>
-        </div>
-        <RouterLink v-if="catalogName === 'admin-employees'" :to="{ name: 'employee-management', params: { id: '' }, query: { create: '1' } }" class="capability-link">
-          新建数字员工 <ArrowUpRight :size="14" />
-        </RouterLink>
-      </header>
       <section :aria-label="`${catalog.title}目录`">
-        <div class="list-toolbar">
-          <div v-if="typeOptions.length > 1" class="type-tabs" role="group" :aria-label="`${catalog.title}分类`">
-            <button v-if="catalogName === 'admin-resources'" type="button" :aria-pressed="!typeFilter" @click="selectType('')">全部</button>
-            <button v-for="type in typeOptions" :key="type" type="button" :aria-pressed="typeFilter === type" @click="selectType(type)">
+        <header class="page-controls">
+          <div v-if="typeOptions.length > 1" class="page-tabs" role="group" :aria-label="`${catalog.title}分类`">
+            <button v-if="catalogName === 'admin-resources'" class="page-tab" type="button"
+              :aria-pressed="!typeFilter" @click="selectType('')">全部</button>
+            <button v-for="type in typeOptions" :key="type" class="page-tab" type="button"
+              :aria-pressed="typeFilter === type" @click="selectType(type)">
               {{ type }}
             </button>
           </div>
-          <div class="list-filters">
-            <el-input v-model="search" :prefix-icon="Search" placeholder="搜索名称、说明或负责人" :aria-label="`搜索${catalog.title}`" clearable />
-            <el-select v-model="statusFilter" placeholder="全部状态" aria-label="状态筛选" clearable>
-              <el-option v-for="status in ['已启用', '已停用', '待发布', '接入未就绪']" :key="status" :label="status" :value="status" />
-            </el-select>
+          <div class="page-toolbar page-tab-toolbar">
+            <div class="page-toolbar-filters list-filters">
+              <el-input v-model="search" :prefix-icon="Search" placeholder="搜索名称、说明或负责人" :aria-label="`搜索${catalog.title}`" clearable />
+              <el-select v-model="statusFilter" popper-class="filter-options" placeholder="全部状态" aria-label="状态筛选" clearable>
+                <el-option v-for="status in ['已启用', '已停用', '待发布', '接入未就绪']" :key="status" :label="status" :value="status" />
+              </el-select>
+            </div>
+            <div v-if="catalogName === 'admin-employees'" class="page-toolbar-controls list-actions">
+              <RouterLink :to="{ name: 'employee-management', params: { id: '' }, query: { from: 'admin', create: '1' } }" class="capability-link">
+                新建 AI 员工 <ArrowUpRight :size="14" />
+              </RouterLink>
+            </div>
           </div>
-        </div>
-        <ul v-if="filtered.length" class="capability-grid">
+        </header>
+        <ul v-if="filtered.length" class="capability-grid page-body">
           <li v-for="item in filtered" :key="item.id">
             <RouterLink class="panel capability-card" :to="{ ...adminCapabilityLink(item), query: { type: route.query.type } }" :aria-label="`查看${item.name}详情`">
               <div class="capability-card-top">
@@ -257,30 +257,21 @@ function saveActivation() {
             </RouterLink>
           </li>
         </ul>
-        <el-empty v-else class="panel" description="没有符合条件的记录" :image-size="84" />
+        <el-empty v-else description="没有符合条件的记录" :image-size="84" />
       </section>
     </template>
     <template v-else-if="selected">
-      <RouterLink :to="listLink" class="back-link"><ArrowLeft :size="15" /> 返回{{ catalog.title }}</RouterLink>
-      <header class="page-header detail-header">
-        <div class="detail-name">
-          <span class="capability-icon" :data-type="selected.type" aria-hidden="true">
-            <component :is="typeIcons[selected.type]" :size="22" />
-          </span>
-          <div>
-            <div class="detail-title">
-              <h1>{{ selected.name }}</h1>
-              <el-tag size="small" type="info" effect="plain">{{ selected.type }}</el-tag>
-            </div>
-            <p v-if="selected.description">{{ selected.description }}</p>
-          </div>
-        </div>
-        <div class="detail-links">
+      <header class="page-controls page-toolbar page-tab-toolbar">
+        <RouterLink :to="listLink" class="back-link"><ArrowLeft :size="15" aria-hidden="true" /> 返回{{ catalog.title }}</RouterLink>
+        <div class="page-toolbar-controls detail-links">
           <RouterLink v-if="developmentLink" class="capability-link" :to="developmentLink">
             前往工作门户配置 <ArrowUpRight :size="14" />
           </RouterLink>
-          <RouterLink v-if="selected.type === '数字员工' && developmentLink" class="capability-link" :to="{ ...developmentLink, query: { tab: 'automation-runs' } }">
-            查看运行记录 <ArrowUpRight :size="14" />
+          <RouterLink v-if="selected.type === 'AI 员工'" class="capability-link" :to="{ name: 'admin-scenario-runs', query: { employee: selected.id } }">
+            查看运行监管 <ArrowUpRight :size="14" />
+          </RouterLink>
+          <RouterLink v-if="selected.type === 'AI 员工' && developmentLink" class="capability-link" :to="{ ...developmentLink, query: { ...developmentLink.query, tab: 'automation-runs' } }">
+            查看规则试跑 <ArrowUpRight :size="14" />
           </RouterLink>
           <RouterLink class="capability-link" :to="{ path: '/admin/changes', query: { target: selected.name } }">
             查看变更记录 <ArrowUpRight :size="14" />
@@ -289,6 +280,7 @@ function saveActivation() {
       </header>
 
       <dl class="panel detail-overview">
+        <div class="detail-identity"><dt>{{ selected.type }}</dt><dd>{{ selected.name }}</dd></div>
         <div>
           <dt>组织启用</dt>
           <dd>
@@ -305,10 +297,10 @@ function saveActivation() {
         </div>
       </dl>
 
-      <div class="detail-grid">
+      <div class="detail-grid page-body">
         <section class="panel detail-card" aria-labelledby="capability-member-title">
           <div class="card-heading">
-            <h2 id="capability-member-title">{{ selected.type === '数字员工' ? '服务范围与负责人' : '授权与负责人' }}</h2>
+            <h2 id="capability-member-title">{{ selected.type === 'AI 员工' ? '服务范围与负责人' : '授权与负责人' }}</h2>
             <span class="muted">{{ affectedMembers.length }} 人</span>
           </div>
           <el-form label-position="top" @submit.prevent="saveMembers">
@@ -326,8 +318,8 @@ function saveActivation() {
           </el-form>
           <div class="card-divider"></div>
           <el-form label-position="top" @submit.prevent="saveMaintainer">
-            <el-form-item :label="selected.type === '数字员工' ? '主要负责人' : '维护负责人'">
-              <el-select v-model="maintainerDraft" filterable clearable :value-on-clear="''" placeholder="选择负责人" :aria-label="selected.type === '数字员工' ? '主要负责人' : '维护负责人'">
+            <el-form-item :label="selected.type === 'AI 员工' ? '主要负责人' : '维护负责人'">
+              <el-select v-model="maintainerDraft" filterable clearable :value-on-clear="''" placeholder="选择负责人" :aria-label="selected.type === 'AI 员工' ? '主要负责人' : '维护负责人'">
                 <el-option v-for="member in platform.users" :key="member.id" :label="`${member.name} · ${member.department}`" :value="member.id" />
               </el-select>
             </el-form-item>
@@ -335,7 +327,7 @@ function saveActivation() {
               <el-button native-type="submit" :disabled="maintainerDraft === (selected.maintainerId ?? '')">保存负责人</el-button>
             </div>
           </el-form>
-          <template v-if="selected.type === '数字员工'">
+          <template v-if="selected.type === 'AI 员工'">
             <div class="card-divider"></div>
             <el-form label-position="top" @submit.prevent="saveConfigurators">
               <el-form-item label="共同负责人">
@@ -454,7 +446,7 @@ function saveActivation() {
         </section>
       </div>
 
-      <el-dialog v-model="activationOpen" :title="`${selected.enabled ? '停用' : '启用'}${selected.type}`" width="480px">
+      <el-dialog v-model="activationOpen" :title="`${selected.enabled ? '停用' : '启用'}${selected.type}`" width="480px" append-to-body>
         <p class="activation-intro">{{ selected.enabled ? '停用' : '启用' }}「{{ selected.name }}」</p>
         <dl class="impact-list">
           <dt>已授权成员（{{ affectedMembers.length }} 人）</dt>
@@ -471,7 +463,7 @@ function saveActivation() {
         </template>
       </el-dialog>
     </template>
-    <el-empty v-else class="panel" description="未找到此记录">
+    <el-empty v-else description="未找到此记录">
       <RouterLink :to="listLink" class="capability-link">返回{{ catalog.title }}</RouterLink>
     </el-empty>
   </div>
@@ -479,25 +471,12 @@ function saveActivation() {
 
 <style scoped>
 .capabilities-page { container-type: inline-size; }
-.list-toolbar { display: grid; gap: 12px; margin-bottom: 16px; }
-.type-tabs { display: flex; flex-wrap: wrap; gap: 4px; }
-.type-tabs button {
-  min-height: 30px;
-  padding: 4px 9px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 13px;
-}
-.type-tabs button:hover, .type-tabs button[aria-pressed="true"] { background: var(--soft); color: var(--accent); }
-.type-tabs button[aria-pressed="true"] { font-weight: 650; }
-.list-filters { display: flex; flex-wrap: wrap; gap: 8px; }
-.list-filters .el-input { width: min(100%, 300px); }
-.list-filters .el-select { width: 126px; }
+.list-filters .el-input { width: min(100%, 204px); }
+.list-filters .el-select { width: 112px; }
+.list-actions .capability-link { font-size: 13px; }
 .capability-grid {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 265px), 1fr)); gap: 14px;
-  list-style: none; margin: 0; padding: 0;
+  list-style: none; margin: 0;
 }
 .capability-grid > li { min-width: 0; }
 .capability-card {
@@ -518,29 +497,23 @@ function saveActivation() {
 .capability-card-footer { display: flex; align-items: center; gap: 6px; font-size: 13px; }
 .capability-card-footer .status-note { margin-top: 0; }
 .capability-card-footer .capability-link { margin-left: auto; }
-.detail-name, .detail-title { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .capability-icon {
   display: grid; place-items: center; flex: 0 0 34px; width: 34px; height: 34px;
   border-radius: 8px; background: var(--soft); color: var(--accent);
 }
 .capability-icon[data-type="知识"], .capability-icon[data-type="工作台"] { background: #eaf6ef; color: #287751; }
 .capability-icon[data-type="技能"], .capability-icon[data-type="工具"] { background: #fff2e6; color: #955922; }
-.capability-icon[data-type="数字员工"], .capability-icon[data-type="MCP"] { background: #f1edfb; color: #7356b1; }
+.capability-icon[data-type="AI 员工"], .capability-icon[data-type="MCP"] { background: #f1edfb; color: #7356b1; }
 .name-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
 .name-text h2 { margin: 0; font-size: 15px; line-height: 1.35; }
 .name-text p { margin: 4px 0 0; font-size: 12px; }
 .status-note { display: block; margin-top: 4px; color: #955922; font-size: 11px; font-weight: 450; white-space: nowrap; }
 .capability-link, .back-link { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); }
 .capability-link:hover, .back-link:hover { color: var(--accent-hover); text-decoration: underline; }
-.back-link { margin-bottom: 13px; font-size: 13px; }
-.detail-header { align-items: center; margin-bottom: 17px; }
-.detail-name .capability-icon { width: 42px; height: 42px; flex-basis: 42px; }
-.detail-title { flex-wrap: wrap; }
-.detail-title h1 { margin: 0; overflow-wrap: anywhere; }
-.detail-name p { margin-top: 3px; }
-.detail-links { display: flex; flex-wrap: wrap; gap: 6px 13px; font-size: 13px; white-space: nowrap; }
+.back-link { font-size: 13px; white-space: nowrap; }
+.detail-links { font-size: 13px; white-space: nowrap; }
 .detail-overview {
-  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0 0 14px;
+  display: grid; grid-template-columns: minmax(0, 1.25fr) repeat(4, minmax(0, 1fr)); margin: 12px 12px 0;
 }
 .detail-overview > div { padding: 12px 15px; border-right: 1px solid var(--line); }
 .detail-overview > div:last-child { border-right: 0; }
@@ -578,10 +551,9 @@ function saveActivation() {
   .detail-grid { grid-template-columns: 1fr; }
 }
 @container (max-width: 460px) {
-  .detail-name .capability-icon { display: none; }
-  .detail-header { flex-wrap: wrap; align-items: flex-start; }
   .detail-overview { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .detail-overview > div:nth-child(2) { border-right: 0; }
-  .detail-overview > div:nth-child(n+3) { border-top: 1px solid var(--line); }
+  .detail-overview > .detail-identity { grid-column: 1 / -1; }
+  .detail-overview > div:nth-child(odd) { border-right: 0; }
+  .detail-overview > div:nth-child(n+2) { border-top: 1px solid var(--line); }
 }
 </style>

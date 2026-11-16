@@ -38,22 +38,19 @@ function clearTarget() {
 </script>
 
 <template>
-  <div class="page">
-    <header class="page-header">
-      <div>
-        <h1>变更记录</h1>
-        <p>查阅授权、启停、版本、交接和系统接入变更。</p>
-      </div>
-    </header>
-
-    <section class="panel audit-list" aria-label="变更记录列表">
-      <div class="audit-filters">
-        <el-input v-model="query" :prefix-icon="Search" aria-label="搜索变更记录" placeholder="搜索对象、操作人或变更内容" clearable />
-        <el-select v-model="actionFilter" aria-label="操作类型" placeholder="全部操作" clearable>
-          <el-option v-for="action in actions" :key="action" :value="action" :label="action" />
-        </el-select>
-        <el-tag v-if="targetFilter" class="audit-target-filter" effect="plain" closable @close="clearTarget">对象 {{ targetFilter }}</el-tag>
-        <span class="results muted">{{ visibleChanges.length }} 条记录</span>
+  <div class="page page-surface">
+    <section aria-label="变更记录列表">
+      <div class="page-toolbar page-tab-toolbar audit-filters">
+        <div class="page-toolbar-filters">
+          <el-input v-model="query" :prefix-icon="Search" aria-label="搜索变更记录" placeholder="搜索对象、操作人或变更内容" clearable />
+          <el-select v-model="actionFilter" popper-class="filter-options" aria-label="操作类型" placeholder="全部操作" clearable>
+            <el-option v-for="action in actions" :key="action" :value="action" :label="action" />
+          </el-select>
+          <el-tag v-if="targetFilter" class="audit-target-filter" effect="plain" closable @close="clearTarget">对象 {{ targetFilter }}</el-tag>
+        </div>
+        <div class="page-toolbar-controls">
+          <span class="results muted">{{ visibleChanges.length }} 条记录</span>
+        </div>
       </div>
       <template v-if="visibleChanges.length">
         <div class="audit-columns audit-labels" aria-hidden="true">
@@ -79,12 +76,10 @@ function clearTarget() {
 </template>
 
 <style scoped>
-.audit-list { overflow: hidden; }
-.audit-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; padding: 14px 16px; }
-.audit-filters .el-input { width: min(100%, 320px); }
-.audit-filters .el-select { width: 144px; }
+.audit-filters .el-input { width: min(100%, 210px); }
+.audit-filters .el-select { width: 112px; }
 .audit-target-filter { max-width: 100%; height: auto; min-height: 24px; white-space: normal; overflow-wrap: anywhere; }
-.results { margin-left: auto; white-space: nowrap; font-size: 12px; }
+.results { white-space: nowrap; font-size: 12px; }
 .audit-columns {
   display: grid; grid-template-columns: minmax(150px, 1fr) minmax(82px, .65fr) minmax(68px, .48fr) minmax(125px, .62fr) 16px;
   gap: 16px; align-items: center; padding: 12px 16px;
@@ -111,8 +106,6 @@ function clearTarget() {
   .audit-columns { grid-template-columns: minmax(120px, 1fr) minmax(72px, .65fr) 64px 120px 16px; gap: 8px; }
 }
 @media (max-width: 700px) {
-  .audit-filters { padding: 12px; }
-  .audit-filters .el-input { width: 100%; }
   .audit-labels { display: none; }
   .audit-summary {
     grid-template-columns: minmax(0, 1fr) auto 16px;

@@ -1,22 +1,30 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
-import { ClipboardList, ContactRound } from 'lucide-vue-next'
+import { Bot, ClipboardList, ContactRound } from 'lucide-vue-next'
+import { useEmployeePendingTasks } from '@/employeePendingTasks'
+import { useOrganizationAdminStore } from '@/stores/organizationAdmin'
 import { usePlatformStore } from '@/stores/platform'
 
 defineProps<{ compact: boolean }>()
 const emit = defineEmits<{ navigate: [] }>()
-const store = usePlatformStore()
+const organization = useOrganizationAdminStore()
+const platform = usePlatformStore()
+const { pendingTasks } = useEmployeePendingTasks()
 const route = useRoute()
 const directoryActive = computed(() => route.name === 'employee-directory')
-const tasksActive = computed(() => ['employee-task-overview', 'employee-tasks', 'employee-task', 'employee-autonomous-tasks'].some(name => name === route.name))
-const pendingCount = computed(() => store.myTasks.filter(task => task.status === '待补充').length)
-const pendingDescription = computed(() => pendingCount.value ? '我交办的任务中有 ' + pendingCount.value + ' 项待补充' : undefined)
+const canOpenResponsibilities = computed(() => platform.currentUser.role === 'admin' || organization.myEmployeeMaintenance.size > 0)
+const fromResponsibilityRuns = computed(() => canOpenResponsibilities.value && route.query.from === 'employee-runs'
+  && (route.name === 'employee-task' || route.name === 'scenario-task'))
+const tasksActive = computed(() => !fromResponsibilityRuns.value
+  && ['employee-task-overview', 'employee-tasks', 'employee-task', 'employee-autonomous-tasks', 'scenario-task'].some(name => name === route.name))
+const pendingCount = computed(() => pendingTasks.value.length)
+const pendingDescription = computed(() => pendingCount.value ? `有 ${pendingCount.value} 项任务待处理` : undefined)
 </script>
 
 <template>
   <div class="employee-navigation">
-    <nav class="sidebar-nav" aria-label="数字员工">
+    <nav class="sidebar-nav" aria-label="AI 员工">
       <RouterLink
         :to="{ name: 'employee-directory' }"
         class="side-link"
@@ -38,6 +46,17 @@ const pendingDescription = computed(() => pendingCount.value ? '我交办的任�
       >
         <ClipboardList :size="18" :stroke-width="1.8" aria-hidden="true" /><span>任务总览</span>
         <span v-if="!compact && pendingCount" class="pending-badge" aria-hidden="true">{{ pendingCount }}</span>
+      </RouterLink>
+      <RouterLink
+        v-if="canOpenResponsibilities"
+        :to="{ name: 'employee-management', params: { id: '' } }"
+        class="side-link"
+        :class="{ active: (route.name === 'employee-management' && route.query.from !== 'admin') || fromResponsibilityRuns }"
+        aria-label="我的员工分身"
+        :title="compact ? '我的员工分身' : undefined"
+        @click="emit('navigate')"
+      >
+        <Bot :size="18" :stroke-width="1.8" aria-hidden="true" /><span>我的员工分身</span>
       </RouterLink>
     </nav>
   </div>

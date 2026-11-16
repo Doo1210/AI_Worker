@@ -23,7 +23,10 @@ const eventTypes = Object.keys(autonomousEventTypeLabels) as AutonomousEventType
 
 const ruleOpen = ref(false)
 const editingId = ref<string>()
-const ruleDraft = reactive<EmployeeAutonomousRuleDraft>({ name: '', eventType: 'file-updated', conditionKeyword: '', ownerId: '', enabled: true })
+const ruleDraft = reactive<EmployeeAutonomousRuleDraft>({
+  name: '', eventType: 'file-updated', conditionKeyword: '', ownerId: '', enabled: true,
+  work: '', delivery: '', handoff: '',
+})
 const ruleError = ref('')
 const simulationOpen = ref(false)
 const simulationType = ref<AutonomousEventType>('file-updated')
@@ -54,6 +57,9 @@ function openRule(rule?: EmployeeAutonomousRule) {
     conditionKeyword: rule?.conditionKeyword ?? '',
     ownerId: rule?.ownerId ?? '',
     enabled: rule?.enabled ?? true,
+    work: rule?.work ?? '',
+    delivery: rule?.delivery ?? '',
+    handoff: rule?.handoff ?? '',
   })
   ruleError.value = ''
   ruleOpen.value = true
@@ -126,6 +132,9 @@ function formatDate(value: string) {
             <div><dt>事件类型</dt><dd>{{ autonomousEventTypeLabels[rule.eventType] }}</dd></div>
             <div><dt>条件关键词</dt><dd>{{ rule.conditionKeyword || '匹配任意事件内容' }}</dd></div>
             <div><dt>业务负责人</dt><dd>{{ memberName(rule.ownerId) }}</dd></div>
+            <div v-if="rule.work"><dt>工作内容</dt><dd>{{ rule.work }}</dd></div>
+            <div v-if="rule.delivery"><dt>结果交付</dt><dd>{{ rule.delivery }}</dd></div>
+            <div v-if="rule.handoff"><dt>人工接手条件</dt><dd>{{ rule.handoff }}</dd></div>
           </dl>
           <div class="automation-actions">
             <el-button size="small" @click="openRule(rule)">编辑</el-button>
@@ -147,6 +156,15 @@ function formatDate(value: string) {
           </el-form-item>
           <el-form-item label="条件关键词">
             <el-input v-model="ruleDraft.conditionKeyword" maxlength="100" placeholder="留空时匹配任意事件内容" />
+          </el-form-item>
+          <el-form-item label="工作内容">
+            <el-input v-model="ruleDraft.work" maxlength="200" placeholder="例如 核对图纸版本与材料清单" />
+          </el-form-item>
+          <el-form-item label="结果交付">
+            <el-input v-model="ruleDraft.delivery" maxlength="200" placeholder="填写交付物和接收人或业务记录" />
+          </el-form-item>
+          <el-form-item label="人工接手条件">
+            <el-input v-model="ruleDraft.handoff" maxlength="200" placeholder="例如 发现版本差异或依赖连接异常" />
           </el-form-item>
           <el-form-item label="业务负责人" required>
             <el-select v-model="ruleDraft.ownerId" aria-label="业务负责人" placeholder="选择业务负责人" filterable>

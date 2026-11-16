@@ -306,37 +306,42 @@ ${current.entries.filter(item => item.kind === 'change').map(item => `${item.tit
     </nav>
 
     <div class="cost-shell">
-      <header class="cost-toolbar">
+      <header class="cost-toolbar page-toolbar">
         <template v-if="project && section !== 'projects'">
-          <div class="cost-crumbs">
-            <button class="cost-home-link" type="button" @click="navigate('projects')"><ArrowLeft :size="14" aria-hidden="true" /> 返回首页</button>
-            <el-dropdown class="cost-project-select" trigger="click" @command="openProject">
-              <button class="cost-project-button" type="button" aria-label="切换项目"><span>{{ project.name }}</span><ChevronDown :size="14" aria-hidden="true" /></button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item v-for="item in projects" :key="item.id" :command="item.id">{{ item.name }}</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-          </div>
-          <div class="cost-toolbar-actions">
+          <div class="page-toolbar-filters">
+            <div class="cost-crumbs">
+              <button class="cost-home-link" type="button" @click="navigate('projects')"><ArrowLeft :size="14" aria-hidden="true" /> 返回首页</button>
+              <el-dropdown class="cost-project-select" trigger="click" @command="openProject">
+                <button class="cost-project-button" type="button" aria-label="切换项目"><span>{{ project.name }}</span><ChevronDown :size="14" aria-hidden="true" /></button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item v-for="item in projects" :key="item.id" :command="item.id">{{ item.name }}</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
+            </div>
             <button type="button" class="cost-search-button" aria-label="搜索项目资料" @click="openSearch">
               <Search :size="16" aria-hidden="true" /><span>搜索</span><kbd>⌘ K</kbd>
             </button>
+          </div>
+          <div class="page-toolbar-controls">
             <button type="button" class="cost-ai-button" :aria-expanded="assistantOpen" @click="assistantOpen = !assistantOpen">
               <Sparkles :size="17" aria-hidden="true" /> AI 助手
             </button>
+            <button v-if="section === 'overview'" class="cost-button" type="button" @click="openProjectDialog('rename')">重命名</button>
+            <button v-else-if="section === 'model'" class="cost-button cost-primary" type="button" @click="openBuilding()"><Plus :size="15" aria-hidden="true" />添加楼栋</button>
+            <button v-else-if="section === 'ledger'" class="cost-button cost-primary" type="button" @click="openEntry()"><Plus :size="15" aria-hidden="true" />新增记录</button>
+            <button v-else-if="section === 'calculator'" class="cost-button" type="button" @click="openLedger('calculation')">计算记录 <ArrowUpRight :size="14" aria-hidden="true" /></button>
+            <button v-else-if="section === 'attachments'" class="cost-button cost-primary" type="button" :disabled="uploading" @click="attachmentInput?.click()"><Upload :size="15" aria-hidden="true" />上传附件</button>
           </div>
         </template>
-        <template v-else>
-          <div class="cost-workbench-title"><Calculator :size="18" aria-hidden="true" />工程造价工作台</div>
+        <div v-else class="page-toolbar-controls">
           <button class="cost-button cost-primary" type="button" @click="openProjectDialog('create')"><Plus :size="15" aria-hidden="true" />新建项目</button>
-        </template>
+        </div>
       </header>
 
       <div class="cost-content" :class="{ 'has-assistant': assistantOpen && project && section !== 'projects' }">
         <div v-if="section === 'projects' || !project" class="cost-body cost-projects">
-          <h1>工程项目</h1>
           <div class="cost-project-list">
             <button v-for="item in projects" :key="item.id" type="button" @click="openProject(item.id)">
               <span class="cost-project-icon"><FolderClosed :size="21" aria-hidden="true" /></span>
@@ -346,12 +351,8 @@ ${current.entries.filter(item => item.kind === 'change').map(item => `${item.tit
           </div>
         </div>
 
-        <div v-else class="cost-body" :class="{ 'is-overview': section === 'overview' }">
+        <div v-else class="cost-body">
           <template v-if="section === 'overview'">
-            <div class="cost-section-title">
-              <h1>{{ project.name }}</h1>
-              <button class="cost-button cost-compact" type="button" @click="openProjectDialog('rename')">重命名</button>
-            </div>
             <div class="cost-overview">
               <div class="cost-summary">
                 <dl>
@@ -373,7 +374,6 @@ ${current.entries.filter(item => item.kind === 'change').map(item => `${item.tit
           </template>
 
           <template v-else-if="section === 'archive'">
-            <div class="cost-section-title"><h1>造价档案</h1></div>
             <div class="cost-section-body">
               <div class="cost-form-grid cost-archive-fields">
                 <label>项目名称<input :value="project.name" readonly /></label>
@@ -390,9 +390,7 @@ ${current.entries.filter(item => item.kind === 'change').map(item => `${item.tit
           </template>
 
           <template v-else-if="section === 'model'">
-            <div class="cost-section-title"><h1>模型配置</h1><button class="cost-button cost-primary" type="button" @click="openBuilding()"><Plus :size="15" aria-hidden="true" />添加楼栋</button></div>
             <div class="cost-section-body">
-              <p class="cost-section-note">按楼栋的层数和建筑面积生成体量示意。</p>
               <div v-if="project.buildings.length" class="cost-table-wrap">
                 <table class="cost-table">
                   <thead><tr><th>楼栋</th><th>层数</th><th>建筑面积</th><th>操作</th></tr></thead>
@@ -408,7 +406,6 @@ ${current.entries.filter(item => item.kind === 'change').map(item => `${item.tit
           </template>
 
           <template v-else-if="section === 'ledger'">
-            <div class="cost-section-title"><h1>工作台</h1><button class="cost-button cost-primary" type="button" @click="openEntry()"><Plus :size="15" aria-hidden="true" />新增记录</button></div>
             <div class="cost-section-body">
               <div class="cost-ledger-nav" role="group" aria-label="切换台账">
                 <button v-for="kind in ledgerKinds" :key="kind" type="button" :aria-pressed="ledger === kind" @click="openLedger(kind)">{{ ledgerLabels[kind] }} <span>{{ ledgerCounts[kind] }}</span></button>
@@ -429,7 +426,6 @@ ${current.entries.filter(item => item.kind === 'change').map(item => `${item.tit
           </template>
 
           <template v-else-if="section === 'calculator'">
-            <div class="cost-section-title"><h1>计算台</h1><button class="cost-button" type="button" @click="openLedger('calculation')">计算记录 <ArrowUpRight :size="14" aria-hidden="true" /></button></div>
             <div class="cost-section-body">
               <form class="cost-calculator" @submit.prevent="recordCalculation">
                 <h2>工程量计价</h2>
@@ -446,7 +442,6 @@ ${current.entries.filter(item => item.kind === 'change').map(item => `${item.tit
           </template>
 
           <template v-else-if="section === 'attachments'">
-            <div class="cost-section-title"><h1>附件库</h1><button class="cost-button cost-primary" type="button" :disabled="uploading" @click="attachmentInput?.click()"><Upload :size="15" aria-hidden="true" />上传附件</button></div>
             <div class="cost-section-body">
               <input ref="attachmentInput" type="file" hidden @change="uploadAttachment" />
               <p class="cost-section-note">单个附件限 512 KB。保存更改后可在本浏览器中再次打开。</p>
@@ -508,7 +503,7 @@ ${current.entries.filter(item => item.kind === 'change').map(item => `${item.tit
         <div class="cost-dialog-actions"><button class="cost-button" type="button" @click="dialog = undefined">取消</button><button class="cost-button cost-primary" type="submit">应用</button></div>
       </form>
       <div v-else-if="dialog === 'search'" class="cost-dialog-form">
-        <label>搜索台账、楼栋和附件<input v-model="searchText" type="search" /></label>
+        <label>搜索台账、楼栋和附件<input v-model="searchText" class="filter-field" type="search" /></label>
         <div v-if="searchResults.length" class="cost-search-results">
           <button v-for="item in searchResults" :key="item.id" type="button" @click="openSearchResult(item)"><span>{{ item.title }}</span><small>{{ item.label }}</small><ArrowUpRight :size="14" aria-hidden="true" /></button>
         </div>

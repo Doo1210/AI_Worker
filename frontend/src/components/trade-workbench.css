@@ -9,27 +9,12 @@
   --trade-mono: 'SFMono-Regular', Consolas, monospace;
   container-type: inline-size;
   min-width: 0;
-  border: 1px solid var(--trade-line);
-  border-radius: 10px;
-  background: #f2eee4;
   color: var(--trade-ink);
 }
-.trade-workbench button:focus-visible, .trade-workbench input:focus-visible { outline-color: var(--trade-gold); outline-offset: 2px; }
-.trade-top { display: flex; flex-wrap: wrap; align-items: stretch; gap: 8px clamp(18px, 4cqw, 55px); padding: 0 18px; border-radius: 9px 9px 0 0; background: var(--trade-navy); color: #fdf7eb; }
-.trade-brand { display: flex; align-items: center; gap: 9px; min-height: 58px; }
-.trade-brand > span { display: grid; width: 34px; height: 34px; place-items: center; border: 1px solid #9f7d4c; border-radius: 3px; color: #e5c390; }
-.trade-brand h1 { margin: 0; font-size: 18px; font-weight: 650; letter-spacing: .055em; }
-.trade-nav, .trade-segment, .trade-buttons, .trade-toolbar-title { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.trade-nav { align-items: stretch; }
-.trade-nav button { padding: 6px 13px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: #c1c9d5; font-weight: 620; }
-.trade-nav button[aria-pressed="true"], .trade-nav button:hover { border-color: #c19a61; color: #fff7e7; }
-.trade-toolbar { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px 16px; padding: 11px 15px; border-bottom: 1px solid var(--trade-line); background: var(--trade-paper); }
-.trade-toolbar h2 { margin: 0; font-size: 19px; font-weight: 680; }
-.trade-toolbar-title { gap: 12px; }
-.trade-segment { gap: 0; border: 1px solid var(--trade-line); border-radius: 3px; }
-.trade-segment button, .trade-button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 32px; padding: 5px 9px; border: 1px solid var(--trade-line); border-radius: 3px; background: var(--trade-paper); color: var(--trade-ink); font-size: 12px; font-weight: 620; }
-.trade-segment button { border: 0; border-radius: 0; }
-.trade-segment button[aria-pressed="true"], .trade-button.trade-primary { border-color: var(--trade-navy); background: var(--trade-navy); color: #fff7e8; }
+.trade-workbench button:where(:not(.page-tab, .page-segment)):focus-visible, .trade-workbench input:focus-visible { outline-color: var(--trade-gold); outline-offset: 2px; }
+.trade-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.trade-button { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 32px; padding: 5px 9px; border: 1px solid var(--trade-line); border-radius: 3px; background: var(--trade-paper); color: var(--trade-ink); font-size: 12px; font-weight: 620; }
+.trade-button.trade-primary { border-color: var(--trade-navy); background: var(--trade-navy); color: #fff7e8; }
 .trade-button:hover:not(:disabled), .trade-button[aria-pressed="true"] { border-color: var(--trade-gold); background: #f5ebd6; }
 .trade-button.trade-primary:hover:not(:disabled) { background: #263951; }
 .trade-button:disabled { opacity: .5; }
@@ -121,10 +106,7 @@
 }
 @container (max-width: 660px) {
   .trade-layout, .trade-docs { grid-template-columns: minmax(0, 1fr); }
-  .trade-top { gap: 0 12px; padding-inline: 11px; }
-  .trade-brand { min-height: 45px; }
-  .trade-nav button { min-height: 38px; }
-  .trade-toolbar, .trade-manifest, .trade-results, .trade-docs { padding: 9px; }
+  .trade-manifest, .trade-results, .trade-docs { padding: 9px; }
   .trade-manifest { position: static; border-right: 0; border-bottom: 1px solid var(--trade-line); }
 }
 @media print {
@@ -132,6 +114,7 @@
   .trade-paper { page: trade-sheet; }
   .app-shell:has(.trade-paper) { display: block; height: auto; min-width: 0; }
   .app-shell:has(.trade-paper) > :not(main), .trade-workbench:has(.trade-paper) > :not(.trade-docs), .trade-docs > :not(.trade-paper) { display: none; }
+  .workbench-page.page-surface:has(.trade-paper) { display: block; min-height: 0; border: 0; border-radius: 0; box-shadow: none; overflow: visible; }
   .app-shell:has(.trade-paper) main, .trade-workbench:has(.trade-paper), .trade-docs, .trade-paper { display: block; height: auto; max-width: none; padding: 0; border: 0; overflow: visible; background: white; }
   .trade-paper-table { overflow: visible; }
   .trade-paper tr { break-inside: avoid; }

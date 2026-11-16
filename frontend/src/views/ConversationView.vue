@@ -2,18 +2,24 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowRight, ArrowUp, CircleCheck, DataAnalysis, Document, Files, Paperclip, Reading, Star } from '@element-plus/icons-vue'
-import { PanelRight } from 'lucide-vue-next'
+import { Clock, PanelRight } from 'lucide-vue-next'
 import { ElMessage, ElOptionGroup } from 'element-plus'
 import { usePlatformStore, type Assistant } from '@/stores/platform'
+import { usePersonalAutomationsStore } from '@/stores/personalAutomations'
+import { automationChatExample, isAutomationRequest, parseAutomationRequest } from '@/automationChatRequest'
+import ConversationArtifactDialog from '@/components/ConversationArtifactDialog.vue'
 import ConversationRightSidebar, { type SidebarLayout, type SidebarTab } from '@/components/ConversationRightSidebar.vue'
 
 const platform = usePlatformStore()
+const automations = usePersonalAutomationsStore()
 const route = useRoute()
 const router = useRouter()
 const selectedAssistant = ref('default')
 const draft = ref('')
 const attachedIds = ref<string[]>([])
 const pendingId = ref('')
+const artifactId = ref('')
+const artifactOpen = ref(false)
 const composer = ref<HTMLTextAreaElement>()
 const threadEnd = ref<HTMLElement>()
 const sidebarToggle = ref<HTMLButtonElement>()
@@ -27,6 +33,9 @@ const sidebarCache = new Map<string, SidebarLayout>()
 
 const requestedConversation = computed(() => typeof route.params.id === 'string' ? route.params.id : '')
 const conversation = computed(() => platform.personalConversations.find((item) => item.id === requestedConversation.value))
+const automationMode = computed(() => !requestedConversation.value && route.query.automation === '1')
+const automationTaskIds = computed(() => new Set(automations.tasks.map(task => task.id)))
+const artifact = computed(() => conversation.value?.messages.find(message => message.id === artifactId.value && message.role === 'assistant' && message.artifactName))
 const sidebarSession = computed(() => conversation.value?.id ?? 'new')
 const activeAssistant = computed(() => platform.visibleAssistants.find((item) => item.id === (conversation.value?.assistantId ?? selectedAssistant.value)))
 const assistantGroups = computed(() => [
@@ -49,6 +58,8 @@ const examples = [
   { title: '分析一组数据', text: '帮我分析业务数据，找出变化最明显的指标并说明可能的原因。', icon: DataAnalysis },
   { title: '起草工作汇报', text: '帮我起草一份周报，按本周成果、风险和下周计划组织。', icon: Reading },
 ]
+const automationExamples = [{ title: automationChatExample, text: automationChatExample, icon: Clock }]
+const automationStartFormat = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' })
 
 function assistantLabel(assistant: Assistant) {
   if (assistant.scope === 'organization') return `${assistant.name} · 组织共享`
@@ -144,6 +155,11 @@ watch(() => platform.currentUser.id, () => {
   attachedIds.value = []
 })
 
+watch(requestedConversation, () => {
+  artifactOpen.value = false
+  artifactId.value = ''
+})
+
 watch(
   () => [conversation.value?.id, conversation.value?.messages.length, pendingId.value],
   () => nextTick(() => threadEnd.value?.scrollIntoView({ block: 'end', behavior: 'smooth' })),
@@ -176,6 +192,22 @@ function isSaved(messageId: string) {
   return platform.myFiles.some((file) => file.id === 'artifact-' + messageId)
 }
 
+function replyToAutomation(text: string, previousRequest?: string) {
+  if (previousRequest && /^取消(?:创建|设置)?[。！!]*$/.test(text)) return { text: '已取消创建。' }
+  const request = previousRequest ? previousRequest + '\n' + text : text
+  const taskDraft = parseAutomationRequest(text) ?? parseAutomationRequest(request)
+  const task = taskDraft && automations.save(taskDraft)
+  if (task) {
+    const start = automationStartFormat.format(new Date(task.startAt))
+    const repeat = { once: '仅一次', daily: '每天重复', weekly: '每周重复' }[task.frequency]
+    return { text: `已创建自动化任务「${task.name}」。\n计划从 ${start} 开始，${repeat}。`, automationTaskId: task.id }
+  }
+  return {
+    text: `请补充任务内容和具体时间。可以设置仅一次、每天或每周。比如「${automationChatExample}」`,
+    automationRequest: request,
+  }
+}
+
 async function send() {
   const text = draft.value.trim()
   if (!text || pendingId.value) return
@@ -189,6 +221,9 @@ async function send() {
   const message = business
     ? `引用业务记录：${business.workbench.name} / ${business.record.id} ${business.record.title}\n当前状态：${business.record.status}\n${business.record.detail}\n\n${text}`
     : text
+  const previousReply = conversation.value?.messages.at(-1)
+  const previousRequest = previousReply?.role === 'assistant' ? previousReply.automationRequest : undefined
+  const scheduling = automationMode.value || !!previousRequest || isAutomationRequest(text)
   const id = conversation.value?.id ?? platform.createConversation(selectedAssistant.value, text.replace(/\s+/g, ' ').slice(0, 28))
   pendingId.value = id
   draft.value = ''
@@ -198,7 +233,8 @@ async function send() {
       storeSidebarLayout(id, sidebarLayout.value)
       await router.replace('/work/chat/' + id)
     }
-    await platform.sendConversationMessage(id, message, references)
+    await platform.sendConversationMessage(id, message, references,
+      scheduling ? () => replyToAutomation(text, previousRequest) : undefined)
   } catch {
     draft.value = text
     attachedIds.value = references
@@ -214,20 +250,15 @@ function handleEnter(event: KeyboardEvent) {
   void send()
 }
 
-function saveFile(messageId: string) {
-  if (!conversation.value) return
-  const fileId = platform.saveMessageFile(conversation.value.id, messageId)
-  if (!fileId) {
-    ElMessage.error('暂时无法保存此产物')
-    return
-  }
-  ElMessage.success('已保存到个人工作空间')
+function openArtifact(messageId: string) {
+  artifactId.value = messageId
+  artifactOpen.value = true
 }
 </script>
 
 <template>
   <div
-    class="conversation-layout"
+    class="page-surface conversation-layout"
     :class="{ 'has-sidebar': sidebarLayout.open, 'sidebar-expanded': sidebarExpanded }"
     @keydown.esc="sidebarLayout.open && toggleSidebar()"
   >
@@ -244,19 +275,15 @@ function saveFile(messageId: string) {
           @click="toggleSidebar"
         ><PanelRight :size="18" aria-hidden="true" /></button>
       </div>
-      <div class="page conversation-page" :class="{ 'with-thread': conversation }">
+      <div class="page-body conversation-page" :class="{ 'with-thread': conversation }">
         <section v-if="!conversation" class="welcome">
           <div class="assistant-mark" aria-hidden="true"><el-icon><Star /></el-icon></div>
-          <h1>我可以帮你做什么？</h1>
-          <p>整理资料、分析数据、起草文档，或直接说说你的想法。</p>
+          <h1>{{ automationMode ? '创建自动化任务' : '我可以帮你做什么？' }}</h1>
+          <p>{{ automationMode ? '告诉助理什么时候运行、要做什么。' : '整理资料、分析数据、起草文档，或直接说说你的想法。' }}</p>
         </section>
 
         <template v-else>
-          <header class="thread-heading">
-            <span class="eyebrow">{{ activeAssistant ? assistantLabel(activeAssistant) : '助理已不可用' }}</span>
-            <h1>{{ conversation.title }}</h1>
-          </header>
-          <section class="thread" aria-label="会话消息" aria-live="polite">
+          <section class="thread" :aria-label="'会话消息 · ' + conversation.title" aria-live="polite">
             <article v-for="message in conversation.messages" :key="message.id" class="message" :class="'is-' + message.role">
               <div v-if="message.role === 'assistant'" class="message-avatar" aria-hidden="true"><el-icon><Star /></el-icon></div>
               <div class="message-body">
@@ -270,12 +297,15 @@ function saveFile(messageId: string) {
                     <span v-else><el-icon><Paperclip /></el-icon>引用文件</span>
                   </template>
                 </div>
-                <button v-if="message.artifactName" class="artifact" type="button"
-                  :disabled="isSaved(message.id)" @click="saveFile(message.id)">
+                <button v-if="message.artifactName" class="artifact" type="button" @click="openArtifact(message.id)">
                   <el-icon><component :is="isSaved(message.id) ? CircleCheck : Document" /></el-icon>
-                  <span>{{ message.artifactName }}</span>
-                  <strong>{{ isSaved(message.id) ? '已保存' : '保存产物' }}</strong>
+                  <span>{{ fileLabel('artifact-' + message.id) ?? message.artifactName }}</span>
+                  <strong>{{ isSaved(message.id) ? '已保存 · 查看' : '预览与编辑' }}</strong>
                 </button>
+                <RouterLink v-if="message.automationTaskId && automationTaskIds.has(message.automationTaskId)"
+                  class="artifact" :to="{ name: 'personal-automations', query: { task: message.automationTaskId } }">
+                  <Clock :size="15" aria-hidden="true" /><strong>查看自动化任务</strong>
+                </RouterLink>
               </div>
             </article>
             <div v-if="pendingId === conversation.id" class="reply-status"><span class="reply-dot"></span>{{ activeAssistant?.name ?? '助理' }}正在处理</div>
@@ -297,7 +327,8 @@ function saveFile(messageId: string) {
                 <el-icon><Document /></el-icon>{{ file.name }}<span aria-hidden="true">×</span>
               </button>
             </div>
-            <textarea ref="composer" v-model="draft" :placeholder="conversation ? '继续补充你的要求…' : '输入你想完成的工作…'"
+            <textarea ref="composer" v-model="draft"
+              :placeholder="conversation ? '继续补充你的要求…' : automationMode ? '输入执行时间和任务内容…' : '输入你想完成的工作…'"
               aria-label="工作内容" rows="2" @keydown.enter="handleEnter"></textarea>
             <div class="composer-controls">
               <div class="composer-options">
@@ -328,7 +359,7 @@ function saveFile(messageId: string) {
         </section>
 
         <section v-if="!conversation" class="examples" aria-label="工作示例">
-          <button v-for="example in examples" :key="example.title" type="button" @click="fillDraft(example.text)">
+          <button v-for="example in automationMode ? automationExamples : examples" :key="example.title" type="button" @click="fillDraft(example.text)">
             <el-icon><component :is="example.icon" /></el-icon>
             {{ example.title }}
             <el-icon class="example-arrow"><ArrowRight /></el-icon>
@@ -348,13 +379,20 @@ function saveFile(messageId: string) {
       @close="toggleSidebar"
       @expand="sidebarExpanded = !sidebarExpanded"
       @reference="addSidebarReference"
+      @edit-artifact="openArtifact"
+    />
+    <ConversationArtifactDialog
+      v-if="conversation"
+      v-model="artifactOpen"
+      :conversation-id="conversation.id"
+      :message="artifact"
     />
   </div>
 </template>
 
 <style scoped>
-.conversation-layout { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 100%; }
-.conversation-layout.has-sidebar:not(.sidebar-expanded) { grid-template-columns: minmax(0, 1fr) clamp(300px, 36%, 460px); gap: var(--content-padding-inline); }
+.conversation-layout { display: grid; grid-template-columns: minmax(0, 1fr); }
+.conversation-layout.has-sidebar:not(.sidebar-expanded) { grid-template-columns: minmax(0, 1fr) clamp(300px, 36%, 460px); }
 .conversation-main { display: flex; flex-direction: column; min-width: 0; }
 .sidebar-control { position: sticky; top: 0; z-index: 2; display: flex; justify-content: flex-end; height: 0; }
 .sidebar-toggle {
@@ -363,22 +401,22 @@ function saveFile(messageId: string) {
   height: 30px;
   padding: 0;
   color: var(--muted);
-  background: var(--canvas);
-  transform: translate(calc(var(--content-padding-inline) - 6px), calc(6px - var(--content-padding-top)));
+  margin: 6px 6px 0 0;
+  background: var(--surface);
 }
 .conversation-sidebar {
   position: sticky;
-  top: calc(-1 * var(--content-padding-top));
-  height: 100dvh;
-  margin-block: calc(-1 * var(--content-padding-top)) calc(-1 * var(--content-padding-bottom));
-  margin-inline-end: calc(-1 * var(--content-padding-inline));
+  top: 0;
+  height: calc(var(--shell-body-height, 100dvh) - var(--content-padding-top) - var(--content-padding-bottom) - 2px);
+  align-self: start;
   border-inline-start: 1px solid var(--line);
 }
-.sidebar-expanded .conversation-sidebar { position: fixed; inset: 0; z-index: 22; margin: 0; border: 0; }
+.sidebar-expanded .conversation-sidebar { position: fixed; inset: 0; z-index: 22; height: auto; border: 0; }
 .conversation-page {
   display: flex;
   flex: 1;
   flex-direction: column;
+  width: 100%;
   min-height: 0;
   max-width: 860px;
   margin-inline: auto;
@@ -417,10 +455,7 @@ function saveFile(messageId: string) {
 .examples button > .el-icon:first-child { color: var(--accent); }
 .examples button:hover { border-color: #aebff1; background: #f6f8ff; }
 .example-arrow { color: var(--muted); margin-left: 1px; }
-.thread-heading { padding-bottom: 14px; border-bottom: 1px solid var(--line); }
-.conversation-layout:not(.has-sidebar) .thread-heading { padding-inline-end: 32px; }
-.thread-heading h1 { margin: 4px 0 0; font-size: 23px; line-height: 1.35; overflow-wrap: anywhere; }
-.thread { flex: 1; padding: 22px 0 12px; }
+.thread { flex: 1; padding: 16px 0 12px; }
 .message { display: flex; gap: 10px; margin-bottom: 19px; }
 .message-body { min-width: 0; max-width: min(85%, 700px); }
 .message-avatar { display: grid; place-items: center; flex: 0 0 29px; height: 29px; color: var(--accent); background: #edf2ff; border-radius: 8px; }
@@ -431,15 +466,14 @@ function saveFile(messageId: string) {
 .message-references { margin-top: 8px; margin-bottom: 0; }
 .artifact { display: inline-flex; align-items: center; gap: 9px; padding: 9px 11px; margin-top: 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); cursor: pointer; font: inherit; font-size: 13px; text-align: left; }
 .artifact strong { color: var(--accent); font-size: 12px; white-space: nowrap; }
-.artifact:disabled { cursor: default; }
 .reply-status { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; margin: 7px 0 16px; }
 .reply-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: pulse 1.4s infinite; }
 .thread-end { scroll-margin-bottom: 148px; }
-.with-thread .composer-section { position: sticky; bottom: 16px; padding: 9px 0 5px; background: var(--canvas); }
+.with-thread .composer-section { position: sticky; bottom: 0; padding: 9px 0 5px; background: var(--surface); }
 @keyframes pulse { 50% { opacity: .35; } }
 @media (max-width: 900px) {
-  .conversation-layout.has-sidebar:not(.sidebar-expanded) { grid-template-columns: minmax(0, 1fr); gap: 0; }
-  .conversation-sidebar { position: fixed; inset: 0; z-index: 22; margin: 0; border: 0; }
+  .conversation-layout.has-sidebar:not(.sidebar-expanded) { grid-template-columns: minmax(0, 1fr); }
+  .conversation-sidebar { position: fixed; inset: 0; z-index: 22; height: auto; border: 0; }
 }
 @media (max-width: 560px) {
   .welcome { margin-bottom: 22px; }
