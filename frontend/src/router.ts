@@ -28,9 +28,10 @@ export function makeRouter(pinia: Pinia) {
       { path: '/employees/manage/:id?', name: 'employee-management', component: () => import('@/views/AdminView.vue') },
       { path: '/employees/:id/autonomous-tasks', name: 'employee-autonomous-tasks', component: () => import('@/views/EmployeeAutonomousTasksView.vue') },
       { path: '/employees/:id', name: 'employee-contact', component: () => import('@/views/EmployeesView.vue') },
+      { path: '/admin/overview', name: 'admin-overview', component: () => import('@/views/AdminOverviewView.vue') },
       { path: '/admin/members/:id?', name: 'admin-members', component: () => import('@/views/AdminMembersView.vue') },
-      { path: '/admin/departments', name: 'admin-departments', component: () => import('@/views/AdminDepartmentsView.vue') },
-      { path: '/admin/roles', name: 'admin-roles', component: () => import('@/views/AdminRolesView.vue') },
+      { path: '/admin/departments', name: 'admin-departments', redirect: to => ({ name: 'admin-members', query: to.query }) },
+      { path: '/admin/roles/:id?', name: 'admin-roles', component: () => import('@/views/AdminRolesView.vue') },
       { path: '/admin/workbenches/:id?', name: 'admin-workbenches', component: adminCatalogView },
       { path: '/admin/employees/:id?', name: 'admin-employees', component: adminCatalogView },
       { path: '/admin/resources/:id?', name: 'admin-resources', component: adminCatalogView },
@@ -79,6 +80,7 @@ export function makeRouter(pinia: Pinia) {
         return { name: 'admin-members', replace: true }
       }
 
+      if (to.path === '/admin') return { name: 'admin-overview', replace: true }
       if (to.name === 'admin-legacy' && to.params.section !== 'assistants') {
         return { name: 'admin-members', replace: true }
       }

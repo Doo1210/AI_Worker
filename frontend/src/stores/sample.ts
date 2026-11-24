@@ -1,6 +1,7 @@
 import type { Assistant, Conversation, Employee, EmployeeThread, Message, PlatformState, Resource, Task, Workbench, WorkspaceFile, WorkspaceFolder } from './platform'
 import { makeScenarioWorkbenches } from './workbenchScenarios'
 import { makeAdminChanges, makeAdminConnections } from './organizationAdminData'
+import { makeOrganizationRoles } from './organizationRoles'
 
 const date = (day: number, time = '09:30:00') => `2026-11-${String(day).padStart(2, '0')}T${time}+08:00`
 const memberIds = ['lin', 'zhou', 'song']
@@ -110,6 +111,9 @@ export function makeSampleState(): PlatformState {
     assistantSharingVersion: 1,
     organizationConnections: makeAdminConnections(),
     organizationChanges: makeAdminChanges(),
+    organizationRoles: makeOrganizationRoles(),
+    organizationRoleAssignments: [],
+    organizationDirectGrants: {},
     organizationDepartments: [
       { id: 'department-delivery', name: '产品与交付', leaderId: 'lin' },
       { id: 'department-design', name: '设计部', parentId: 'department-delivery' },

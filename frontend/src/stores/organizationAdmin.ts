@@ -1,5 +1,6 @@
 import { computed } from 'vue'
 import { defineStore } from 'pinia'
+import type { OrganizationRole } from './organizationRoles'
 import { makeId, nowIso, usePlatformStore, type Assistant, type Employee, type Resource, type User, type Workbench } from './platform'
 import {
   activeCapabilityVersion, activeConfiguration, capabilityConnectionId, capabilityVersions, captureCapabilityVersion,
@@ -153,6 +154,162 @@ export const useOrganizationAdminStore = defineStore('organization-admin', () =>
   ])
   const connections = computed(() => platform.organizationConnections)
   const changes = computed(() => platform.organizationChanges)
+  const roles = computed(() => platform.organizationRoles)
+
+  // Existing explicit grants become the baseline; role assignments retain their own sources.
+  for (const member of platform.users) {
+    platform.organizationDirectGrants[member.id] ??= targets.value
+      .filter(({ item }) => item.allowedUserIds?.includes(member.id)).map(({ item }) => item.id)
+  }
+
+  function directCapabilityIds(memberId: string) {
+    return platform.organizationDirectGrants[memberId] ?? []
+  }
+
+  function memberRoles(memberId: string) {
+    const member = platform.users.find(user => user.id === memberId)
+    const assigned = platform.organizationRoleAssignments.filter(item => item.memberId === memberId)
+    const management = roles.value.find(role => role.kind === 'management' && role.systemRole === member?.role
+      && assigned.some(item => item.roleId === role.id))
+      ?? roles.value.find(role => role.builtin && role.systemRole === member?.role)
+    return [...(management ? [management] : []), ...roles.value.filter(role => role.kind === 'business'
+      && assigned.some(item => item.roleId === role.id))]
+  }
+
+  function grantSources(memberId: string, capabilityId: string) {
+    return [
+      ...(directCapabilityIds(memberId).includes(capabilityId) ? ['直接分配'] : []),
+      ...roles.value.filter(role => role.enabled && role.kind === 'business'
+        && platform.organizationRoleAssignments.some(item => item.memberId === memberId && item.roleId === role.id
+          && item.capabilityIds.includes(capabilityId))).map(role => `角色 · ${role.name}`),
+    ]
+  }
+
+  function reconcileMemberAccess(memberId: string) {
+    const effective = new Set(directCapabilityIds(memberId))
+    for (const assignment of platform.organizationRoleAssignments.filter(item => item.memberId === memberId)) {
+      if (roles.value.some(role => role.id === assignment.roleId && role.enabled && role.kind === 'business')) {
+        assignment.capabilityIds.forEach(id => effective.add(id))
+      }
+    }
+    for (const { item } of targets.value) {
+      const previous = item.allowedUserIds ?? []
+      if (effective.has(item.id) !== previous.includes(memberId)) {
+        item.allowedUserIds = effective.has(item.id) ? [...previous, memberId] : previous.filter(id => id !== memberId)
+      }
+    }
+  }
+
+  function canAssignRole(role: OrganizationRole) {
+    return isAdmin.value || (role.kind === 'business' && role.capabilityIds.every(canAssignCapability))
+  }
+
+  function saveRole(draft: Pick<OrganizationRole, 'name' | 'description' | 'kind' | 'systemRole' | 'capabilityIds'>, id?: string) {
+    const current = roles.value.find(role => role.id === id)
+    const name = draft.name.trim()
+    if (!isAdmin.value || !name || (id && !current) || current?.builtin
+      || roles.value.some(role => role.id !== id && role.name === name)
+      || (current && current.kind !== draft.kind)
+      || (draft.kind === 'management' && !['admin', 'department-admin'].includes(draft.systemRole ?? ''))
+      || draft.capabilityIds.some(capabilityId => !findTarget(capabilityId))) return false
+    const values = { name, description: draft.description.trim(), kind: draft.kind,
+      systemRole: draft.kind === 'management' ? draft.systemRole : undefined,
+      capabilityIds: draft.kind === 'business' ? [...new Set(draft.capabilityIds)] : [] }
+    if (current) {
+      const before = `${current.name} · v${current.version}`
+      // Management presets cannot change while assigned to members.
+      if (current.systemRole !== values.systemRole && platform.organizationRoleAssignments.some(item => item.roleId === current.id)) return false
+      Object.assign(current, values, { version: current.version + 1 })
+      record('更新角色', name, before, `${name} · v${current.version}；已有授权待手动同步`)
+    } else {
+      roles.value.push({ ...values, id: makeId('role'), enabled: true, version: 1 })
+      record('新建角色', name, '无', draft.kind === 'business' ? `${values.capabilityIds.length} 项使用权限` : '管理角色')
+    }
+    return true
+  }
+
+  function setRoleEnabled(id: string, enabled: boolean) {
+    const role = roles.value.find(item => item.id === id)
+    if (!isAdmin.value || !role || role.builtin
+      || (role.kind === 'management' && platform.organizationRoleAssignments.some(item => item.roleId === id))) return false
+    role.enabled = enabled
+    platform.users.forEach(member => reconcileMemberAccess(member.id))
+    record(enabled ? '启用角色' : '停用角色', role.name, enabled ? '已停用' : '已启用', enabled ? '已启用' : '已停用')
+    return true
+  }
+
+  interface AssignRolesOptions {
+    replace?: boolean
+    synchronize?: boolean
+    managementDepartmentIds: string[]
+    assignableCapabilityIds: string[]
+  }
+
+  function assignRoles(memberIds: string[], roleIds: string[], options: AssignRolesOptions) {
+    const ids = [...new Set(memberIds)]
+    const selected = [...new Set(roleIds)].map(id => roles.value.find(role => role.id === id))
+    if (!ids.length || selected.some(role => !role || (!canAssignRole(role)
+      && !(role.kind === 'management' && ids.every(id => memberRoles(id).some(item => item.id === role.id)))))) return false
+    const selectedRoles = selected as OrganizationRole[]
+    const managers = selectedRoles.filter(role => role.kind === 'management')
+    if (managers.length > 1) return false
+    const plans = ids.map(id => {
+      const member = platform.users.find(user => user.id === id)
+      const current = memberRoles(id)
+      const next = options.replace ? selectedRoles : [
+        ...current.filter(role => !selectedRoles.some(item => item.id === role.id)
+          && !(managers.length && role.kind === 'management')), ...selectedRoles,
+      ]
+      const management = next.find(role => role.kind === 'management')
+        ?? roles.value.find(role => role.systemRole === 'member' && role.builtin)!
+      return { member, current, next, management }
+    })
+    if (plans.some(({ member, current, next, management }) => {
+      if (!member || member.status === 'disabled' || !canManageMember(member)) return true
+      if (next.some(role => !role.enabled && !current.some(item => item.id === role.id))) return true
+      if (current.filter(role => !next.includes(role)).some(role => !canAssignRole(role))) return true
+      const existingManager = current.find(role => role.kind === 'management')
+      const changeManager = existingManager?.id !== management.id || (managers.length > 0 && management.systemRole === 'department-admin'
+        && (!sameIds(options.managementDepartmentIds, member.managementDepartmentIds ?? [])
+          || !sameIds(options.assignableCapabilityIds, member.assignableCapabilityIds ?? [])))
+      if (changeManager && (!isAdmin.value || member.id === platform.currentUser.id)) return true
+      if (changeManager && management.systemRole === 'department-admin' && (!options.managementDepartmentIds.length
+        || options.managementDepartmentIds.some(id => !departments.value.some(item => item.id === id))
+        || options.assignableCapabilityIds.some(id => !findTarget(id)))) return true
+      const effective = new Set(directCapabilityIds(member.id))
+      for (const role of next.filter(role => role.enabled && role.kind === 'business')) {
+        const previous = platform.organizationRoleAssignments.find(item => item.memberId === member.id && item.roleId === role.id)
+        const grants = options.synchronize !== false && selectedRoles.some(item => item.id === role.id) ? role.capabilityIds : previous?.capabilityIds ?? []
+        grants.forEach(id => effective.add(id))
+      }
+      if (capabilities.value.some(item => item.memberIds.includes(member.id) !== effective.has(item.id)
+        && !canAssignCapability(item.id))) return true
+      return false
+    })) return false
+    for (const { member, current, next, management } of plans) {
+      if (!member) continue
+      const existingManager = current.find(role => role.kind === 'management')
+      if (existingManager?.id !== management.id || (managers.length && management.systemRole === 'department-admin'
+        && (!sameIds(options.managementDepartmentIds, member.managementDepartmentIds ?? [])
+          || !sameIds(options.assignableCapabilityIds, member.assignableCapabilityIds ?? [])))) {
+        updateMemberRole(member.id, { role: management.systemRole!, managementDepartmentIds: options.managementDepartmentIds,
+          assignableCapabilityIds: options.assignableCapabilityIds })
+      }
+      const before = current.map(role => role.name).join('、')
+      const previous = platform.organizationRoleAssignments.filter(item => item.memberId === member.id)
+      platform.organizationRoleAssignments = platform.organizationRoleAssignments.filter(item => item.memberId !== member.id)
+      for (const role of next.filter(role => role.kind === 'business' || !role.builtin)) {
+        const existing = previous.find(item => item.roleId === role.id)
+        const synchronize = options.synchronize !== false && selectedRoles.some(item => item.id === role.id) && role.enabled
+        platform.organizationRoleAssignments.push({ memberId: member.id, roleId: role.id,
+          capabilityIds: synchronize ? [...role.capabilityIds] : [...(existing?.capabilityIds ?? [])],
+          version: synchronize ? role.version : existing?.version ?? role.version })
+      }
+      reconcileMemberAccess(member.id)
+      record('分配角色', member.name, before, memberRoles(member.id).map(role => role.name).join('、'))
+    }
+    return true
+  }
 
   function readyToEnable(target: Target) {
     if (!versionsOf(target).length) return false
@@ -268,9 +425,15 @@ export const useOrganizationAdminStore = defineStore('organization-admin', () =>
   }
 
   function updateCapabilityMembers(target: Target, next: string[]) {
-    const previous = target.item.allowedUserIds ?? []
+    const previous = platform.users.filter(member => directCapabilityIds(member.id).includes(target.item.id)).map(member => member.id)
     if (!sameIds(previous, next)) {
-      target.item.allowedUserIds = next
+      for (const member of platform.users) {
+        if (previous.includes(member.id) === next.includes(member.id)) continue
+        const direct = directCapabilityIds(member.id)
+        platform.organizationDirectGrants[member.id] = next.includes(member.id)
+          ? [...new Set([...direct, target.item.id])] : direct.filter(id => id !== target.item.id)
+        reconcileMemberAccess(member.id)
+      }
       record('分配使用权', target.item.name, memberLabel(previous), memberLabel(next))
     }
   }
@@ -281,11 +444,12 @@ export const useOrganizationAdminStore = defineStore('organization-admin', () =>
     if (!isAdmin.value || !target || !knownMembers(next)) return false
 
     const counterpart = includePaired ? pairedTarget(target) : undefined
-    const previous = target.item.allowedUserIds ?? []
+    const previous = platform.users.filter(member => directCapabilityIds(member.id).includes(target.item.id)).map(member => member.id)
     const added = counterpart ? next.filter(memberId => !previous.includes(memberId)) : []
     updateCapabilityMembers(target, next)
     if (counterpart && added.length) {
-      updateCapabilityMembers(counterpart, [...new Set([...(counterpart.item.allowedUserIds ?? []), ...added])])
+      const pairedDirect = platform.users.filter(member => directCapabilityIds(member.id).includes(counterpart.item.id)).map(member => member.id)
+      updateCapabilityMembers(counterpart, [...new Set([...pairedDirect, ...added])])
     }
     return true
   }
@@ -323,25 +487,15 @@ export const useOrganizationAdminStore = defineStore('organization-admin', () =>
     if (!member || !canManageMember(member) || capabilityIds.some(id => !findTarget(id))) return false
     const requested = new Set(capabilityIds)
     return targets.value.every(({ item }) =>
-      canAssignCapability(item.id) || (item.allowedUserIds?.includes(memberId) ?? false) === requested.has(item.id))
+      canAssignCapability(item.id) || directCapabilityIds(memberId).includes(item.id) === requested.has(item.id))
   }
 
   function applyMemberCapabilities(memberId: string, capabilityIds: string[]) {
-    const requested = new Set(capabilityIds)
-    const previous: string[] = []
-    const next: string[] = []
-    let changed = false
-    for (const { item } of targets.value) {
-      const ids = item.allowedUserIds ?? []
-      const hadAccess = ids.includes(memberId)
-      const hasAccess = requested.has(item.id)
-      if (hadAccess) previous.push(item.name)
-      if (hasAccess) next.push(item.name)
-      if (hadAccess === hasAccess) continue
-      item.allowedUserIds = hasAccess ? [...ids, memberId] : ids.filter(id => id !== memberId)
-      changed = true
-    }
-    if (changed) record('分配使用权', memberLabel([memberId]), previous.join('、') || '无', next.join('、') || '无')
+    const previous = directCapabilityIds(memberId)
+    platform.organizationDirectGrants[memberId] = [...new Set(capabilityIds)]
+    reconcileMemberAccess(memberId)
+    const names = (ids: string[]) => capabilities.value.filter(item => ids.includes(item.id)).map(item => item.name).join('、') || '无'
+    if (!sameIds(previous, capabilityIds)) record('分配使用权', memberLabel([memberId]), names(previous), names(capabilityIds))
   }
 
   function setMembersCapabilities(updates: { memberId: string; capabilityIds: string[] }[]) {
@@ -536,6 +690,7 @@ export const useOrganizationAdminStore = defineStore('organization-admin', () =>
       title: fields.title.trim(), initials: Array.from(name)[0]!, status: 'active',
     }
     platform.users.push(member)
+    platform.organizationDirectGrants[member.id] = []
     record('新增成员', member.name, '无', memberSummary(member))
     return true
   }
@@ -591,7 +746,7 @@ export const useOrganizationAdminStore = defineStore('organization-admin', () =>
     if (!isAdmin.value || !member || !department || department.id === member.departmentId || member.status === 'disabled') return false
     const successor = platform.users.find(user => user.id === draft.successorId && user.id !== id && user.status !== 'disabled')
     if (draft.handoverIds.length && !successor) return false
-    const granted = capabilities.value.filter(item => item.memberIds.includes(id))
+    const granted = capabilities.value.filter(item => directCapabilityIds(id).includes(item.id))
     const handovers = capabilities.value.filter(item => draft.handoverIds.includes(item.id) && capabilityResponsibilities(item, id))
     if (!draft.revokeIds.every(capabilityId => granted.some(item => item.id === capabilityId))
       || !draft.handoverIds.every(capabilityId => handovers.some(item => item.id === capabilityId))) return false
@@ -626,5 +781,6 @@ export const useOrganizationAdminStore = defineStore('organization-admin', () =>
     setCapabilityConnection, saveConnection, testConnection, setConnectionEnabled, createMember, updateMember,
     departments, visibleDepartments, visibleMembers, isAdmin, canOpenAdmin, canManageMember, canAssignCapability,
     saveDepartment, updateMemberRole, transferMember,
+    roles, memberRoles, grantSources, directCapabilityIds, canAssignRole, saveRole, setRoleEnabled, assignRoles,
   }
 })

@@ -3,7 +3,7 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from
 import { useRoute, useRouter } from 'vue-router'
 import {
   Activity, ArrowLeft, Bot, Boxes, Calculator, Check, ChevronDown, ChevronLeft, ChevronRight, Clock,
-  FolderOpen, History, LayoutGrid, Menu, MessageSquare, Network, Package, PenTool, Plug, Plus, Settings2, ShieldCheck, Ship, UsersRound, X,
+  FolderOpen, History, LayoutDashboard, LayoutGrid, Menu, MessageSquare, Package, PenTool, Plug, Plus, Settings2, ShieldCheck, Ship, UsersRound, X,
 } from 'lucide-vue-next'
 import { FileSearch, ListChecks, MessagesSquare, PanelsTopLeft } from 'lucide-vue-next'
 import EmployeesSidebar from '@/components/EmployeesSidebar.vue'
@@ -43,9 +43,11 @@ const lastPortalPage = reactive<Record<PortalTab, string>>({
   resources: portalTabs[2].home,
 })
 const adminTabs = [
+  { id: 'overview', name: '概览', items: [
+    { name: '平台概览', path: '/admin/overview', icon: LayoutDashboard },
+  ] },
   { id: 'organization', name: '组织管理', items: [
-    { name: '组织架构', path: '/admin/departments', icon: Network },
-    { name: '成员管理', path: '/admin/members', icon: UsersRound },
+    { name: '组织与成员', path: '/admin/members', icon: UsersRound },
     { name: '角色与权限', path: '/admin/roles', icon: ShieldCheck },
   ] },
   { id: 'capabilities', name: '能力与资源', items: [
@@ -59,15 +61,17 @@ const adminTabs = [
     { name: '变更记录', path: '/admin/changes', icon: History },
   ] },
 ] as const
-const adminHome = adminTabs[0].items[1].path
+const adminHome = computed(() => organization.isAdmin ? '/admin/overview' : '/admin/members')
 const lastAdminPage = reactive<Record<(typeof adminTabs)[number]['id'], string>>({
-  organization: adminHome,
-  capabilities: adminTabs[1].items[0].path,
-  system: adminTabs[2].items[0].path,
+  overview: '/admin/overview',
+  organization: '/admin/members',
+  capabilities: '/admin/workbenches',
+  system: '/admin/connections',
 })
 const lastUse = ref(lastPortalPage.work)
-const lastAdmin = ref<string>(adminHome)
+const lastAdmin = ref<string>(adminHome.value)
 const isAdmin = computed(() => route.path.startsWith('/admin'))
+const showSidebar = computed(() => route.name !== 'admin-overview')
 const portalTab = computed<PortalTab>(() => {
   if (route.path === '/employees' || route.path.startsWith('/employees/')) return 'employees'
   if (route.path === '/work/resources' || route.path.startsWith('/work/resources/')) return 'resources'
@@ -145,17 +149,17 @@ function switchAccount(id: string) {
   store.setCurrentUser(id)
   for (const tab of portalTabs) lastPortalPage[tab.id] = tab.home
   for (const tab of adminTabs) lastAdminPage[tab.id] = tab.items[0].path
-  lastAdminPage.organization = adminHome
+  lastAdminPage.organization = '/admin/members'
   lastUse.value = lastPortalPage.work
-  lastAdmin.value = adminHome
+  lastAdmin.value = adminHome.value
   void router.replace(lastPortalPage.work)
 }
 </script>
 
 <template>
-  <div class="app-shell" :class="{ 'admin-mode': isAdmin }" @keydown.esc="mobileMenu = false">
+  <div class="app-shell" :class="{ 'admin-mode': isAdmin, 'without-sidebar': !showSidebar }" @keydown.esc="mobileMenu = false">
     <header class="shell-header">
-      <button type="button" class="icon-button header-menu" :aria-label="mobileMenu ? '关闭菜单' : '打开菜单'" aria-controls="main-sidebar" :aria-expanded="mobileMenu" @click="mobileMenu = !mobileMenu">
+      <button v-if="showSidebar" type="button" class="icon-button header-menu" :aria-label="mobileMenu ? '关闭菜单' : '打开菜单'" aria-controls="main-sidebar" :aria-expanded="mobileMenu" @click="mobileMenu = !mobileMenu">
         <component :is="mobileMenu ? X : Menu" :size="19" aria-hidden="true" />
       </button>
       <RouterLink class="brand-link" :to="isAdmin ? adminHome : '/work/chat'" :aria-label="isAdmin ? '管理后台首页' : '工作门户首页'" @click="mobileMenu = false">
@@ -192,9 +196,9 @@ function switchAccount(id: string) {
         </el-dropdown>
       </div>
     </header>
-    <button v-if="mobileMenu" class="sidebar-scrim" type="button" aria-label="关闭侧栏" @click="mobileMenu = false"></button>
+    <button v-if="showSidebar && mobileMenu" class="sidebar-scrim" type="button" aria-label="关闭侧栏" @click="mobileMenu = false"></button>
 
-    <aside id="main-sidebar" class="shell-sidebar" :class="{ 'mobile-open': mobileMenu, 'is-compact': isCompact }" aria-label="当前区域菜单">
+    <aside v-if="showSidebar" id="main-sidebar" class="shell-sidebar" :class="{ 'mobile-open': mobileMenu, 'is-compact': isCompact }" aria-label="当前区域菜单">
       <div class="sidebar-scroll">
         <nav v-if="isAdmin" class="sidebar-nav" :aria-label="adminTab.name">
           <RouterLink v-for="item in adminItems" :key="item.path" :to="item.path" class="side-link" :class="{ active: isAdminItemActive(item.path) }" :aria-label="item.name" :title="isCompact ? item.name : undefined" @click="mobileMenu = false">
@@ -266,7 +270,7 @@ function switchAccount(id: string) {
 
     </aside>
 
-    <div class="sidebar-divider">
+    <div v-if="showSidebar" class="sidebar-divider">
       <button
         type="button"
         class="shell-sidebar-toggle"

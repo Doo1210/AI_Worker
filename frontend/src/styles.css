@@ -54,6 +54,7 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible { outline: 2px s
   height: 100dvh;
   min-width: 320px;
 }
+.app-shell.without-sidebar { grid-template-columns: 0 0 minmax(0, 1fr); }
 .shell-header {
   grid-area: 1 / 1 / 2 / -1;
   z-index: 21;
@@ -115,8 +116,15 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible { outline: 2px s
 }
 .sidebar-scroll { overflow-y: auto; overscroll-behavior: contain; flex: 1; min-height: 0; padding: 12px 14px; }
 .sidebar-nav { display: grid; gap: 3px; }
-.new-chat { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 36px; padding: 7px 12px; margin-bottom: 7px; color: #000; background: #fff; border: 1px solid var(--line); border-radius: 9px; font-weight: 650; }
-.new-chat:hover { border-color: #c8d0dc; }
+.new-chat {
+  display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; padding: 9px 12px;
+  margin-bottom: 10px; border: 1px solid var(--accent); border-radius: 10px;
+  background: var(--accent); color: #fff; font-size: 14px; font-weight: 650;
+  box-shadow: 0 2px 6px #315cde24;
+}
+.new-chat > svg { flex: none; }
+.new-chat:hover { border-color: var(--accent-hover); background: var(--accent-hover); box-shadow: 0 3px 8px #315cde30; }
+.new-chat:active { border-color: var(--el-color-primary-dark-2); background: var(--el-color-primary-dark-2); box-shadow: none; }
 .side-link, .history-link { display: flex; align-items: center; gap: 10px; min-width: 0; border-radius: 8px; color: #4e5970; }
 .side-link { min-height: 37px; padding: 7px 11px; font-size: 14px; font-weight: 550; }
 .side-link > svg, .history-link > svg { flex-shrink: 0; color: #67748d; }
@@ -267,7 +275,7 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible { outline: 2px s
 .is-compact .workbench-section .history-link > span { display: none; }
 .is-compact :is(.new-chat, .side-link) { justify-content: center; padding-inline: 0; }
 .is-compact :is(.new-chat, .side-link) { min-height: 36px; }
-.is-compact .new-chat { margin-bottom: 8px; }
+.is-compact .new-chat { min-height: 40px; margin-bottom: 8px; }
 .is-compact .workbench-section, .compact-recent-section { margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line); }
 .is-compact .workbench-section .history-link { justify-content: center; min-height: 36px; padding-inline: 0; }
 .compact-recent-trigger { width: 100%; border: 0; background: transparent; }
@@ -278,6 +286,9 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible { outline: 2px s
 
 @media (width > 700px) and (prefers-reduced-motion: no-preference) {
   .shell-sidebar { transition: width 160ms ease; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .new-chat { transition: background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease; }
 }
 
 @media (max-width: 800px) {

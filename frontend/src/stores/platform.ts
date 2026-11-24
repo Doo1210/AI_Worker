@@ -9,6 +9,7 @@ import { TENDER_WORKBENCH_ID } from './tenderSample'
 import { DESIGN_STUDIO_WORKBENCH_ID } from './designStudio'
 import { PROJECT_WORKBENCH_ID } from './projectWorkbench'
 import { draftOfficeDocument } from '@/officeDocument'
+import { type OrganizationRole, type RoleAssignment } from './organizationRoles'
 import {
   activeCapabilityVersion, activeConfiguration, capabilityConnectionId, capabilityVersions, captureCapabilityVersion, connectionIsReady,
   type AdminChange, type AdminConnection, type OrganizationCapabilityFields, type OrganizationDepartment,
@@ -196,6 +197,9 @@ export interface PlatformState {
   organizationConnections: AdminConnection[]
   organizationChanges: AdminChange[]
   organizationDepartments: OrganizationDepartment[]
+  organizationRoles: OrganizationRole[]
+  organizationRoleAssignments: RoleAssignment[]
+  organizationDirectGrants: Record<string, string[]>
 }
 
 const storageKey = 'ai-worker-platform-prototype-v2'
@@ -265,6 +269,9 @@ function loadState(): PlatformState {
       if (Array.isArray(parsed.users) && parsed.users.length) {
         const state = { ...seed, ...parsed }
         state.organizationDepartments = Array.isArray(parsed.organizationDepartments) ? parsed.organizationDepartments : seed.organizationDepartments
+        state.organizationRoles = Array.isArray(parsed.organizationRoles) ? parsed.organizationRoles : seed.organizationRoles
+        state.organizationRoleAssignments = Array.isArray(parsed.organizationRoleAssignments) ? parsed.organizationRoleAssignments : []
+        state.organizationDirectGrants = parsed.organizationDirectGrants && typeof parsed.organizationDirectGrants === 'object' ? parsed.organizationDirectGrants : {}
         const migratedDepartments = migrateDepartmentMembership(state)
         const userIds = new Set(state.users.map(user => user.id))
         const savedWorkbenches = Array.isArray(parsed.workbenches) ? parsed.workbenches : seed.workbenches

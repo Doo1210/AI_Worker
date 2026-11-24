@@ -8,6 +8,8 @@ import { usePlatformStore, type User } from '@/stores/platform'
 import { capabilityResponsibilities, useOrganizationAdminStore } from '@/stores/organizationAdmin'
 import { organizationRoleLabels } from '@/stores/organizationAdminData'
 import AdminMemberTransferDialog from '@/components/AdminMemberTransferDialog.vue'
+import OrganizationDepartmentTree from '@/components/OrganizationDepartmentTree.vue'
+import RoleAssignmentDialog from '@/components/RoleAssignmentDialog.vue'
 
 const platform = usePlatformStore()
 const organization = useOrganizationAdminStore()
@@ -18,6 +20,16 @@ const department = ref('')
 const roleFilter = ref('')
 const statusFilter = ref('')
 const selectedIds = ref<string[]>([])
+const includeChildren = ref(false)
+const assignmentOpen = ref(false)
+const assignmentMemberIds = ref<string[]>([])
+const departmentScope = computed(() => {
+  const ids = new Set(department.value ? [department.value] : [])
+  if (includeChildren.value) for (const id of ids) {
+    organization.visibleDepartments.filter(item => item.parentId === id).forEach(item => ids.add(item.id))
+  }
+  return ids
+})
 const detailMember = computed(() => organization.visibleMembers.find(member => member.id === route.params.id))
 const detailTab = ref('profile')
 const transferOpen = ref(false)
@@ -29,12 +41,12 @@ const responsibilities = computed(() => {
 })
 const departments = computed(() => organization.visibleDepartments)
 const departmentMemberIds = computed(() => department.value ? organization.visibleMembers
-  .filter(member => member.departmentId === department.value && member.status !== 'disabled' && organization.canManageMember(member))
+  .filter(member => departmentScope.value.has(member.departmentId ?? '') && member.status !== 'disabled' && organization.canManageMember(member))
   .map(member => member.id) : [])
 const members = computed(() => {
   const search = query.value.trim().toLowerCase()
-  return organization.visibleMembers.filter(member => (!department.value || member.departmentId === department.value)
-    && (!roleFilter.value || member.role === roleFilter.value)
+  return organization.visibleMembers.filter(member => (!department.value || departmentScope.value.has(member.departmentId ?? ''))
+    && (!roleFilter.value || organization.memberRoles(member.id).some(role => role.id === roleFilter.value))
     && (!statusFilter.value || (member.status ?? 'active') === statusFilter.value)
     && [member.name, member.department, member.title].some(value => value.toLowerCase().includes(search)))
 })
@@ -55,7 +67,7 @@ const automaticGrants = computed(() => organization.capabilities.filter(item => 
 const affected = computed(() => {
   const selected = new Set(grantIds.value)
   return grantMemberIds.value.reduce((total, memberId) => total + assignable.value.filter(item => {
-    const hasAccess = item.memberIds.includes(memberId)
+    const hasAccess = organization.directCapabilityIds(memberId).includes(item.id)
     if (!isBatch.value) return hasAccess !== selected.has(item.id)
     return selected.has(item.id) && (grantMode.value === '分配' ? !hasAccess : hasAccess)
   }).length, 0)
@@ -64,7 +76,7 @@ const profileOpen = ref(false)
 const creatingMember = ref(false)
 const profile = reactive({ name: '', departmentId: '', title: '', status: 'active' as NonNullable<User['status']> })
 
-watch([query, department, roleFilter, statusFilter], () => { selectedIds.value = [] })
+watch([query, department, roleFilter, statusFilter, includeChildren], () => { selectedIds.value = [] })
 watch(() => route.query.department, id => {
   if (route.name === 'admin-members') department.value = typeof id === 'string' && departments.value.some(item => item.id === id) ? id : ''
 }, { immediate: true })
@@ -94,7 +106,7 @@ function openGrants(ids: string[], batch = false) {
   automaticPairs.clear()
   explicitlyDeselected.clear()
   grantIds.value = !batch
-    ? assignable.value.filter(item => item.memberIds.includes(ids[0] ?? '')).map(item => item.id)
+    ? assignable.value.filter(item => organization.directCapabilityIds(ids[0] ?? '').includes(item.id)).map(item => item.id)
     : []
   grantMode.value = '分配'
   grantOpen.value = true
@@ -133,7 +145,7 @@ function updateGrantIds(ids: string[]) {
 function saveGrants() {
   const selected = new Set(grantIds.value)
   const updates = grantMemberIds.value.map(memberId => {
-    const current = organization.capabilities.filter(item => item.memberIds.includes(memberId)).map(item => item.id)
+    const current = organization.directCapabilityIds(memberId)
     const capabilityIds = !isBatch.value ? [...current.filter(id => !organization.canAssignCapability(id)), ...grantIds.value] : grantMode.value === '分配'
       ? [...new Set([...current, ...grantIds.value])]
       : current.filter(id => !selected.has(id))
@@ -185,22 +197,29 @@ function setDepartment(id: string) {
   department.value = id
   void router.replace({ query: { ...route.query, department: id || undefined } })
 }
+
+function assignRoles(ids: string[]) {
+  assignmentMemberIds.value = [...ids]
+  assignmentOpen.value = true
+}
 </script>
 
 <template>
-  <div class="page page-surface members-page" aria-label="成员管理">
+  <div class="page page-surface members-page" aria-label="组织与成员">
     <template v-if="detailMember">
       <header class="page-controls">
         <div class="page-tabs" role="group" aria-label="成员详情">
           <button class="page-tab" type="button" :aria-pressed="detailTab === 'profile'" @click="detailTab = 'profile'">基本信息</button>
+          <button class="page-tab" type="button" :aria-pressed="detailTab === 'roles'" @click="detailTab = 'roles'">角色分配 <small>{{ organization.memberRoles(detailMember.id).length }}</small></button>
           <button class="page-tab" type="button" :aria-pressed="detailTab === 'grants'" @click="detailTab = 'grants'">使用授权 <small>{{ detailGrants.length }}</small></button>
           <button class="page-tab" type="button" :aria-pressed="detailTab === 'duties'" @click="detailTab = 'duties'">负责维护 <small>{{ responsibilities.length }}</small></button>
         </div>
         <div class="page-toolbar page-tab-toolbar">
-          <RouterLink class="member-back" :to="{ name: 'admin-members', params: { id: '' }, query: route.query }"><el-icon><ArrowLeft /></el-icon>成员管理</RouterLink>
+          <RouterLink class="member-back" :to="{ name: 'admin-members', params: { id: '' }, query: route.query }"><el-icon><ArrowLeft /></el-icon>{{ detailMember.name }} · 返回组织与成员</RouterLink>
           <div v-if="canEditMember" class="page-toolbar-controls">
             <el-button @click="editProfile">编辑成员</el-button>
             <el-button v-if="organization.isAdmin && detailMember.status !== 'disabled'" @click="transferOpen = true">调岗交接</el-button>
+            <el-button v-if="detailMember.status !== 'disabled'" @click="assignRoles([detailMember.id])">分配角色</el-button>
             <el-button v-if="assignable.length" type="primary" @click="openGrants([detailMember.id])">编辑使用授权</el-button>
           </div>
         </div>
@@ -217,12 +236,18 @@ function setDepartment(id: string) {
           </div>
         </dl>
       </section>
+      <section v-else-if="detailTab === 'roles'" aria-label="成员角色">
+        <div v-for="item in organization.memberRoles(detailMember.id)" :key="item.id" class="member-detail-row">
+          <div><RouterLink v-if="organization.isAdmin" :to="{ name: 'admin-roles', params: { id: item.id } }"><strong>{{ item.name }}</strong></RouterLink><strong v-else>{{ item.name }}</strong><small>{{ item.kind === 'business' ? '业务角色' : '管理角色' }} · {{ item.description }}</small></div>
+          <el-tag size="small" :type="item.enabled ? 'success' : 'info'" effect="plain">{{ item.enabled ? '已分配' : '角色已停用' }}</el-tag>
+        </div>
+      </section>
       <section v-else-if="detailTab === 'grants'" aria-label="使用授权">
         <div v-for="item in detailGrants" :key="item.id" class="member-detail-row">
           <div>
             <RouterLink v-if="organization.isAdmin" :to="adminCapabilityLink(item)"><strong>{{ item.name }}</strong></RouterLink>
             <strong v-else>{{ item.name }}</strong>
-            <small>{{ item.type }} · 直接分配</small>
+            <small>{{ item.type }} · {{ organization.grantSources(detailMember.id, item.id).join('、') }}</small>
           </div>
           <el-tag :type="detailMember.status === 'disabled' || !item.enabled ? 'info' : item.ready ? 'success' : 'warning'" effect="plain">{{ detailMember.status === 'disabled' ? '账号已停用' : item.enabled ? (item.ready ? '可使用' : '待就绪') : '未启用' }}</el-tag>
         </div>
@@ -242,23 +267,21 @@ function setDepartment(id: string) {
       <AdminMemberTransferDialog v-if="organization.isAdmin" v-model="transferOpen" :member="detailMember" />
     </template>
 
-    <section v-else aria-label="组织成员">
+    <div v-else class="organization-members-layout">
+    <OrganizationDepartmentTree :selected-id="department" @select="setDepartment" />
+    <section class="organization-members-content" aria-label="组织成员">
       <div class="page-toolbar page-tab-toolbar member-toolbar">
-        <div class="page-toolbar-filters">
+        <div class="member-list-context"><span>{{ department ? departments.find(item => item.id === department)?.name : '全部成员' }} <small>{{ members.length }}</small></span><el-checkbox v-if="department" v-model="includeChildren" size="small">含子部门</el-checkbox></div>
+        <div class="page-toolbar-controls">
           <el-input v-model="query" :prefix-icon="Search" aria-label="搜索成员" placeholder="搜索姓名、部门或岗位" clearable />
-          <el-select :model-value="department" popper-class="filter-options" aria-label="按部门筛选" placeholder="全部部门" clearable @update:model-value="setDepartment">
-            <el-option v-for="item in departments" :key="item.id" :label="item.name" :value="item.id" />
-          </el-select>
           <el-select v-model="roleFilter" popper-class="filter-options" aria-label="按角色筛选" placeholder="全部角色" clearable>
-            <el-option v-for="(label, role) in organizationRoleLabels" :key="role" :label="label" :value="role" />
+            <el-option v-for="item in organization.roles" :key="item.id" :label="item.name" :value="item.id" />
           </el-select>
           <el-select v-model="statusFilter" popper-class="filter-options" aria-label="按账号状态筛选" placeholder="全部状态" clearable>
             <el-option label="已启用" value="active" /><el-option label="已停用" value="disabled" />
           </el-select>
-        </div>
-        <div class="page-toolbar-controls">
-          <el-button v-if="department && assignable.length" :disabled="!departmentMemberIds.length" @click="openGrants(departmentMemberIds, true)">分配给本部门</el-button>
-          <el-button v-if="assignable.length" :disabled="!selectedIds.length" @click="openGrants(selectedIds, true)">批量调整授权{{ selectedIds.length ? '（' + selectedIds.length + '）' : '' }}</el-button>
+          <el-button :disabled="!selectedIds.length" @click="assignRoles(selectedIds)">分配角色</el-button>
+          <el-dropdown v-if="assignable.length" trigger="click"><el-button aria-label="成员更多操作">更多操作</el-button><template #dropdown><el-dropdown-menu><el-dropdown-item :disabled="!selectedIds.length" @click="openGrants(selectedIds, true)">批量调整使用授权</el-dropdown-item><el-dropdown-item :disabled="!departmentMemberIds.length" @click="openGrants(departmentMemberIds, true)">分配给本部门</el-dropdown-item></el-dropdown-menu></template></el-dropdown>
           <el-button type="primary" :icon="Plus" @click="addMember">添加成员</el-button>
         </div>
       </div>
@@ -274,18 +297,22 @@ function setDepartment(id: string) {
             <div><strong>{{ member.name }}</strong><small>{{ member.title }}{{ member.status === 'disabled' ? ' · 已停用' : '' }}</small></div>
           </div>
           <span class="member-department">{{ member.department || '—' }}</span>
-          <span class="member-role">{{ organizationRoleLabels[member.role] }}</span>
+          <span class="member-role member-role-names">{{ organization.memberRoles(member.id).map(item => item.name).join('、') }}</span>
           <span class="member-count">{{ accessCount(member.id) }} 项</span>
           <el-button link type="primary" :aria-label="'查看' + member.name" @click="showMember(member.id)">查看</el-button>
         </div>
       </div>
       <el-empty v-if="!members.length" description="没有符合条件的成员" :image-size="72" />
     </section>
+    </div>
+
+    <RoleAssignmentDialog v-model="assignmentOpen" :member-ids="assignmentMemberIds" />
 
     <ElDrawer v-model="grantOpen" :title="isBatch ? '批量调整使用授权' : '编辑使用授权'" size="min(100vw, 500px)" append-to-body>
       <form class="grant-form" @submit.prevent="saveGrants">
         <p class="muted">成员 · {{ organization.visibleMembers.filter(member => grantMemberIds.includes(member.id)).map(member => member.name).join('、') }}</p>
-        <p v-if="isBatch" class="muted grant-hint">授权直接写入本次所选成员，之后新增或调入的成员需单独分配。</p>
+        <p class="muted grant-hint">这里调整直接使用授权。角色授予的权限可在「角色分配」中调整，其他来源的有效授权继续保留。</p>
+        <p v-if="isBatch" class="muted grant-hint">授权写入本次所选成员，之后新增或调入的成员需单独分配。</p>
         <el-select v-if="isBatch" v-model="grantMode" aria-label="批量操作">
           <el-option label="分配使用权" value="分配" /><el-option label="收回使用权" value="收回" />
         </el-select>
@@ -327,6 +354,8 @@ function setDepartment(id: string) {
 </template>
 
 <style scoped>
+.organization-members-layout { display: grid; grid-template-columns: 210px minmax(0, 1fr); min-height: inherit; }
+.organization-members-content { min-width: 0; container-type: inline-size; }.member-list-context { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; font-size: 13px; }.member-list-context small { color: var(--muted); margin-left: 4px; }.member-role-names { font-size: 12px; line-height: 1.6; overflow-wrap: anywhere; }
 .member-back { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); font-size: 13px; }
 .member-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .member-actions .el-button { margin-left: 0; }
@@ -337,6 +366,7 @@ function setDepartment(id: string) {
 .page-tab small { color: var(--muted); font-size: 12px; }
 .member-toolbar .el-input { width: min(100%, 190px); }
 .member-toolbar .el-select { width: 112px; }
+.member-toolbar .el-input { width: 165px; }
 .member-row { display: grid; grid-template-columns: 28px minmax(120px, 1.4fr) minmax(90px, 1fr) minmax(88px, .8fr) 76px 48px; gap: 12px; align-items: center; min-height: 61px; padding: 8px 16px; border-top: 1px solid var(--line); font-size: 13px; }
 .member-head { min-height: 40px; background: var(--canvas); color: var(--muted); }
 .member-identity { display: flex; align-items: center; gap: 9px; min-width: 0; }
@@ -354,7 +384,15 @@ function setDepartment(id: string) {
 .grant-companions li span { overflow-wrap: anywhere; }
 .grant-companions li .el-button { flex: none; }
 @media (max-width: 800px) {
-  .member-row { grid-template-columns: 24px minmax(0, 1fr) 65px 42px; gap: 8px; padding-inline: 10px; }
-  .member-department, .member-role { display: none; }
+  .organization-members-layout { grid-template-columns: minmax(0, 1fr); }
+  .organization-members-layout :deep(.organization-tree-panel) { border-inline-end: 0; border-bottom: 1px solid var(--line); }
+}
+@container (max-width: 650px) {
+  .member-row { grid-template-columns: 24px minmax(0, 1.3fr) minmax(84px, .8fr) 48px; gap: 8px; padding-inline: 10px; }
+  .member-department, .member-count { display: none; }
+}
+@container (max-width: 430px) {
+  .member-row { grid-template-columns: 24px minmax(0, 1fr) 42px; }
+  .member-role { display: none; }
 }
 </style>

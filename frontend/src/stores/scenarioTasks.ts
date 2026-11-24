@@ -129,7 +129,7 @@ export function scenarioNextStep(task: ScenarioTask) {
 function runMetadata(task: ScenarioTask) {
   return {
     id: task.id, title: scenarioDefinitions[task.scenarioId].label, scenarioId: task.scenarioId,
-    employeeId: task.employeeId, origin: task.origin, channel: task.channel, objectId: task.objectId,
+    employeeId: task.employeeId, origin: task.origin, initiatorId: task.initiatorId, channel: task.channel, objectId: task.objectId,
     objectVersion: task.objectVersion, status: task.status, assigneeId: task.assigneeId,
     createdAt: task.createdAt, updatedAt: task.updatedAt,
     attempts: task.attempts.map(attempt => ({ ...attempt })),

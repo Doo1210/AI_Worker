@@ -12,7 +12,7 @@ const transfer = reactive({
   departmentId: '', title: '', revokeIds: [] as string[], handoverIds: [] as string[], successorId: '',
 })
 const destinations = computed(() => organization.departments.filter(department => department.id !== props.member.departmentId))
-const grants = computed(() => organization.capabilities.filter(item => item.memberIds.includes(props.member.id)))
+const grants = computed(() => organization.capabilities.filter(item => organization.directCapabilityIds(props.member.id).includes(item.id)))
 const duties = computed(() => organization.capabilities.flatMap(item => {
   const label = capabilityResponsibilities(item, props.member.id)
   return label ? [{ item, label }] : []
@@ -50,7 +50,7 @@ function submit() {
       </div>
       <section aria-labelledby="transfer-grants">
         <h3 id="transfer-grants">使用授权</h3>
-        <p v-if="grants.length" class="muted">勾选此次要收回的直接授权，其余授权继续有效。调入后可单独分配所需能力。</p>
+        <p v-if="grants.length" class="muted">勾选此次要收回的直接授权。角色来源的授权需在角色分配中调整，调入后可单独分配所需能力。</p>
         <div v-if="grants.length" class="transfer-checks">
           <el-checkbox-group v-model="transfer.revokeIds" aria-label="要收回的授权">
             <el-checkbox v-for="item in grants" :key="item.id" :value="item.id">{{ item.name }} · {{ item.type }}</el-checkbox>

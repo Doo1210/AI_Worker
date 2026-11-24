@@ -65,6 +65,8 @@ const availableConnections = computed(() => organization.connections.filter(conn
 const dependencies = computed(() => organization.capabilities.filter(item => selected.value?.dependencyIds.includes(item.id)))
 const dependents = computed(() => organization.capabilities.filter(item => selected.value && item.dependencyIds.includes(selected.value.id)))
 const affectedMembers = computed(() => platform.users.filter(member => selected.value?.memberIds.includes(member.id)))
+const directMemberIds = computed(() => platform.users.filter(member => selected.value
+  && organization.directCapabilityIds(member.id).includes(selected.value.id)).map(member => member.id))
 const availableConfigurators = computed(() => platform.users.filter(member => member.id !== selected.value?.maintainerId
   && (member.status !== 'disabled' || selected.value?.configuratorIds.includes(member.id))))
 const developmentLink = computed(() => {
@@ -126,9 +128,9 @@ watch(catalogName, () => {
   statusFilter.value = ''
 })
 watch(newPairedMemberCount, count => { if (!count) includePair.value = true })
-watch([selected, () => platform.currentUser.id], ([item, userId], [previous, previousUserId]) => {
+watch([selected, () => platform.currentUser.id, directMemberIds], ([item, userId], [previous, previousUserId]) => {
   const changedItem = item?.id !== previous?.id || userId !== previousUserId
-  if (changedItem || item?.memberIds.join() !== previous?.memberIds.join()) memberDraft.value = [...(item?.memberIds ?? [])]
+  memberDraft.value = [...directMemberIds.value]
   if (changedItem || item?.pairedId !== previous?.pairedId) {
     pairDraft.value = item?.pairedId ?? ''
     includePair.value = true
@@ -304,16 +306,17 @@ function saveActivation() {
             <span class="muted">{{ affectedMembers.length }} 人</span>
           </div>
           <el-form label-position="top" @submit.prevent="saveMembers">
-            <el-form-item label="授权成员">
+            <el-form-item label="直接授权成员">
               <el-select v-model="memberDraft" multiple filterable clearable placeholder="按姓名或部门选择成员" aria-label="授权成员">
                 <el-option v-for="member in platform.users" :key="member.id" :label="`${member.name} · ${member.department}`" :value="member.id" />
               </el-select>
             </el-form-item>
+            <p class="muted status-note">角色授予的使用权在角色分配中调整，收回直接授权后，其他有效来源继续保留。</p>
             <el-checkbox v-if="paired && newPairedMemberCount" v-model="includePair" class="paired-grant">
               同时分配「{{ paired.name }}」<span class="muted"> · {{ newPairedMemberCount }} 人</span>
             </el-checkbox>
             <div class="form-actions">
-              <el-button type="primary" native-type="submit" :disabled="!differentMembers(memberDraft, selected.memberIds)">保存授权</el-button>
+              <el-button type="primary" native-type="submit" :disabled="!differentMembers(memberDraft, directMemberIds)">保存授权</el-button>
             </div>
           </el-form>
           <div class="card-divider"></div>
