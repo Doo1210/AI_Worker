@@ -80,10 +80,9 @@ const availableConfigurators = computed(() => platform.users.filter(member => me
   && (member.status !== 'disabled' || selected.value?.configuratorIds.includes(member.id))))
 const developmentLink = computed(() => {
   const item = selected.value
-  if (!item || !organization.canConfigureCapability(item.id) && !organization.canPublishCapability(item.id)) return undefined
-  if (item.type === '组织助理') return { path: '/work/assistants/manage', query: { assistant: item.id } }
+  if (!item || item.type === '组织助理' || item.type === '工作台') return undefined
+  if (!organization.canConfigureCapability(item.id) && !organization.canPublishCapability(item.id)) return undefined
   if (item.type === 'AI 员工') return { name: 'employee-management', params: { id: item.id }, query: { from: 'admin' } }
-  if (item.type === '工作台') return undefined
   return { path: '/work/resources/manage/' + encodeURIComponent(item.id) }
 })
 

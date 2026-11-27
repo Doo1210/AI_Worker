@@ -14,7 +14,7 @@ export function makeRouter(pinia: Pinia) {
       { path: '/work', redirect: '/work/chat' },
       { path: '/work/chat/:id?', component: () => import('@/views/ConversationView.vue') },
       { path: '/work/assistants', name: 'personal-assistants', component: () => import('@/views/AssistantsView.vue') },
-      { path: '/work/assistants/manage', name: 'assistant-management', component: () => import('@/views/AdminAssistantsView.vue') },
+      { path: '/work/assistants/manage', redirect: { name: 'personal-assistants', query: {} } },
       { path: '/work/assistants/:id/configuration', name: 'personal-assistant-configuration', component: () => import('@/views/AssistantConfigurationView.vue') },
       { path: '/work/workspace', component: () => import('@/views/WorkspaceView.vue') },
       { path: '/work/automations', name: 'personal-automations', component: () => import('@/views/PersonalAutomationsView.vue') },
@@ -129,13 +129,12 @@ export function makeRouter(pinia: Pinia) {
         ? { name: 'employee-management', params: { id: '' }, replace: true }
         : { name: 'employee-directory', replace: true }
     }
-    const developmentType = to.name === 'assistant-management' ? '组织助理' : undefined
-    if (!admin && (developmentType || to.name === 'resource-management')) {
+    if (!admin && to.name === 'resource-management') {
       const allowed = organization.capabilities.some(item =>
-        (developmentType ? item.type === developmentType : !['AI 员工', '组织助理', '工作台'].includes(item.type))
+        !['AI 员工', '组织助理', '工作台'].includes(item.type)
         && (organization.canConfigureCapability(item.id) || organization.canPublishCapability(item.id)),
       )
-      if (!allowed) return developmentType ? '/work/assistants' : '/work/resources'
+      if (!allowed) return '/work/resources'
     }
     return true
   })

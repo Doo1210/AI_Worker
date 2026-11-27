@@ -5,10 +5,8 @@ import { ChatDotRound, Plus, Search, Setting, Share, Star, User } from '@element
 import { ElMessage } from 'element-plus'
 import { resourceTypes } from '@/resourceNavigation'
 import { generalAssistantName, usePlatformStore, type Assistant, type Resource } from '@/stores/platform'
-import { useOrganizationAdminStore } from '@/stores/organizationAdmin'
 
 const platform = usePlatformStore()
-const organization = useOrganizationAdminStore()
 const router = useRouter()
 const route = useRoute()
 const generalDescription = '处理日常办公，协助整理资料和起草文稿。'
@@ -57,9 +55,6 @@ const assistantCards = computed(() => {
   }
   return cards
 })
-const canDevelop = computed(() => platform.currentUser.role === 'admin' || organization.capabilities.some(item =>
-  item.type === '组织助理' && (organization.canConfigureCapability(item.id) || organization.canPublishCapability(item.id))))
-const showOrganizationSettings = computed(() => showSharedAssistants.value && canDevelop.value)
 const creating = ref(false)
 const name = ref('')
 const description = ref('')
@@ -125,9 +120,8 @@ function summarizeResources(resources: Resource[]) {
     <header class="page-controls">
       <div class="page-title-row">
         <h1 id="assistants-title">我的助理</h1>
-        <div v-if="showPersonalAssistants || showOrganizationSettings" class="page-toolbar-controls">
-          <el-button v-if="showOrganizationSettings" :icon="Setting" @click="router.push({ name: 'assistant-management' })">组织助理配置</el-button>
-          <el-button v-if="showPersonalAssistants" type="primary" :icon="Plus" @click="openCreate">新建助理</el-button>
+        <div v-if="showPersonalAssistants" class="page-toolbar-controls">
+          <el-button type="primary" :icon="Plus" @click="openCreate">新建助理</el-button>
         </div>
       </div>
       <div class="page-toolbar page-tab-toolbar">
