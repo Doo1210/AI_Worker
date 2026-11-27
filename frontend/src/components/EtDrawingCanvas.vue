@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch, watchEffect } from 'vue'
 import { FileBox, FolderOpen, Maximize, Minus, Plus, ScanLine, Upload, X } from 'lucide-vue-next'
-import { fileCenterName } from '@/workspaceDirectory'
+import { workspaceName } from '@/workspaceDirectory'
 import { selectEntities, type Bounds, type DrawingEntity, type Point } from './etDrawing'
 
 const props = defineProps<{
@@ -178,7 +178,7 @@ defineExpose({ revealSelection })
       <div v-if="!previewOnly" class="drawing-toolbar">
         <span class="drawing-name" :title="drawing.name"><FileBox :size="17" aria-hidden="true" />{{ drawing.name }}</span>
         <div class="drawing-actions">
-          <button type="button" :aria-label="`从${fileCenterName}选择文件`" :disabled="loading" @click="emit('workspace')"><FolderOpen :size="16" aria-hidden="true" />{{ fileCenterName }}</button>
+          <button type="button" :aria-label="`从${workspaceName}选择文件`" :disabled="loading" @click="emit('workspace')"><FolderOpen :size="16" aria-hidden="true" />{{ workspaceName }}</button>
           <button type="button" :disabled="loading" @click="emit('upload')"><Upload :size="16" aria-hidden="true" />上传本地文件</button>
           <button type="button" aria-label="关闭图纸" title="关闭图纸" @click="emit('close')"><X :size="17" /></button>
         </div>
@@ -211,7 +211,7 @@ defineExpose({ revealSelection })
       <p>支持 ASCII DXF 图纸预览<br />可浏览图纸、框选实体，并使用智能问图</p>
       <div class="open-actions">
         <button type="button" class="open-button" :disabled="loading" @click="emit('workspace')">
-          <FolderOpen :size="17" aria-hidden="true" />从{{ fileCenterName }}选择文件
+          <FolderOpen :size="17" aria-hidden="true" />从{{ workspaceName }}选择文件
         </button>
         <button type="button" class="open-button upload-button" :disabled="loading" @click="emit('upload')">
           <Upload :size="17" aria-hidden="true" />上传本地文件

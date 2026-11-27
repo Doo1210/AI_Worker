@@ -13,6 +13,7 @@ import { adminCatalogs } from '@/adminCatalogs'
 import { resourceLibraryLocation, resourceTypeFromQuery, resourceTypeItems } from '@/resourceNavigation'
 import { usePlatformStore } from '@/stores/platform'
 import { useOrganizationAdminStore } from '@/stores/organizationAdmin'
+import { workspaceName } from '@/workspaceDirectory'
 
 const store = usePlatformStore()
 const organization = useOrganizationAdminStore()
@@ -96,7 +97,7 @@ const workspacePath = '/work/workspace'
 const isWorkspace = computed(() => route.path === workspacePath)
 const workItems = computed(() => [
   { name: '我的助理', to: '/work/assistants', icon: Bot, active: route.path.startsWith('/work/assistants') },
-  { name: '工作空间', to: isWorkspace.value ? route.fullPath : workspacePath, icon: FolderOpen, active: isWorkspace.value },
+  { name: workspaceName, to: isWorkspace.value ? route.fullPath : workspacePath, icon: FolderOpen, active: isWorkspace.value },
   { name: '自动化任务', to: '/work/automations', icon: Clock, active: route.name === 'personal-automations' },
 ])
 

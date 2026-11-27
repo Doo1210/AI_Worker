@@ -19,6 +19,7 @@ export interface ResolvedWorkspaceDirectory extends WorkspaceDirectory, Workspac
   canWrite: boolean
 }
 
+export const workspaceName = '工作空间'
 export const fileCenterName = '文件中心'
 export const personalFilesName = '我的文件'
 export const sharedSpacesName = '共享空间'

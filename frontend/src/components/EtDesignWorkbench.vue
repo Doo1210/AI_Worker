@@ -11,7 +11,7 @@ import { useEtDrawingReviewStore } from '@/stores/etDrawingReview'
 import { etWorkspaceId } from '@/stores/sharedWorkspaces'
 import { etReviewId, etReviewTitle, useScenarioTaskStore } from '@/stores/scenarioTasks'
 import { useWorkbenchAssistant } from '@/workbenchAssistant'
-import { fileCenterName } from '@/workspaceDirectory'
+import { workspaceName } from '@/workspaceDirectory'
 import WorkbenchAssistantSelect from '@/components/WorkbenchAssistantSelect.vue'
 import ConversationFileTree from './ConversationFileTree.vue'
 import EtDrawingCanvas from './EtDrawingCanvas.vue'
@@ -536,7 +536,7 @@ async function askDrawing(text = question.value) {
     <EtReviewWorkspace v-if="reviewOpen" v-model:open="sharedWorkspaceOpen" @open-version="openSharedVersion" />
     <el-dialog
       v-model="workspacePickerOpen"
-      :title="`从${fileCenterName}选择文件`"
+      :title="`从${workspaceName}选择文件`"
       width="min(480px, calc(100vw - 28px))"
       append-to-body
       destroy-on-close
