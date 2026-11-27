@@ -4,8 +4,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { ArrowDown, ArrowUp, Bot, Check, Clock, Copy, FileText, FolderOpen, LoaderCircle, PanelRight, Paperclip, Plus, X } from 'lucide-vue-next'
 import { ElMessage, ElOptionGroup } from 'element-plus'
 import { usePlatformStore, type Assistant } from '@/stores/platform'
+import { ET_DESIGN_WORKBENCH_ID } from '@/stores/sample'
 import { usePersonalAutomationsStore } from '@/stores/personalAutomations'
-import { useSharedWorkspacesStore } from '@/stores/sharedWorkspaces'
+import { etWorkspaceId, useSharedWorkspacesStore } from '@/stores/sharedWorkspaces'
 import { conversationDirectoryDisplay, personalFilesName, sharedSpacesName, type DirectoryFolder } from '@/workspaceDirectory'
 import { automationChatExample, isAutomationRequest, parseAutomationRequest } from '@/automationChatRequest'
 import ConversationArtifactDialog from '@/components/ConversationArtifactDialog.vue'
@@ -44,15 +45,24 @@ const sidebarCache = new Map<string, SidebarLayout>()
 
 const requestedConversation = computed(() => typeof route.params.id === 'string' ? route.params.id : '')
 const conversation = computed(() => platform.personalConversations.find((item) => item.id === requestedConversation.value))
+const etDrawingLaunchId = computed(() => !requestedConversation.value && typeof route.query.etDrawing === 'string' ? route.query.etDrawing : undefined)
+const drawingDraft = computed(() => etDrawingLaunchId.value ? platform.getEtDrawingLaunch(etDrawingLaunchId.value) : undefined)
+const boundDrawing = computed(() => conversation.value?.etDrawing)
+const drawingWorkbenchLocation = computed(() => ({ name: 'workbench', params: { id: ET_DESIGN_WORKBENCH_ID }, query: {
+  review: boundDrawing.value?.reviewVersion ? etWorkspaceId : undefined,
+  version: boundDrawing.value?.reviewVersion,
+} }))
 const automationMode = computed(() => !requestedConversation.value && route.query.automation === '1')
 const automationTaskIds = computed(() => new Set(automations.tasks.map(task => task.id)))
 const artifact = computed(() => conversation.value?.messages.find(message => message.id === artifactId.value && message.role === 'assistant' && message.artifactName))
 const sidebarSession = computed(() => conversation.value?.id ?? 'new')
 const activeAssistant = computed(() => platform.visibleAssistants.find((item) => item.id === (conversation.value?.assistantId ?? selectedAssistant.value)))
+const unavailableBindings = computed(() => activeAssistant.value
+  ? platform.assistantResourceBindings(activeAssistant.value.id).filter(binding => binding.status !== '可用').length : 0)
 const assistantGroups = computed(() => [
   { label: '平台内置', assistants: platform.visibleAssistants.filter(assistant => assistant.id === 'default') },
   { label: '个人配置', assistants: platform.myAssistants },
-  { label: '组织共享', assistants: platform.sharedAssistants.filter(assistant => assistant.scope === 'organization') },
+  { label: '组织分配', assistants: platform.sharedAssistants.filter(assistant => assistant.scope === 'organization') },
   { label: '成员共享', assistants: platform.sharedAssistants.filter(assistant => assistant.scope !== 'organization') },
 ].filter(group => group.assistants.length))
 
@@ -83,6 +93,8 @@ const workspaceLocation = computed(() => ({ path: '/work/workspace', query: {
 const bindingIssue = computed(() => {
   if (!activeAssistant.value) return '当前助理不可用。'
   if (!activeDirectory.value) return '当前工作目录不可用。'
+  if (boundDrawing.value && !platform.canUseEtDrawingContext(boundDrawing.value)) return '当前图纸上下文已不可继续使用。'
+  if (etDrawingLaunchId.value && !drawingDraft.value) return '图纸引用已失效，可从工作台重新发起会话。'
   return ''
 })
 const contextFile = computed(() => {
@@ -94,7 +106,8 @@ const businessContext = computed(() => {
   const record = workbench?.records.find(item => item.id === route.query.record)
   return workbench && record ? { workbench, record } : undefined
 })
-const contextLabel = computed(() => contextFile.value?.name ?? businessContext.value?.record.title)
+const contextLabel = computed(() => drawingDraft.value
+  ? `${drawingDraft.value.drawingName} · ${drawingDraft.value.scope}` : contextFile.value?.name ?? businessContext.value?.record.title)
 const attachedFiles = computed(() => directoryFiles.value.filter(file => attachedIds.value.includes(file.id)))
 const matchingReferences = computed(() => directoryFiles.value.filter(file =>
   file.name.toLocaleLowerCase().includes(referenceFilter.value.trim().toLocaleLowerCase())))
@@ -109,7 +122,7 @@ const automationStartFormat = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'med
 const messageTimeFormat = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
 
 function assistantLabel(assistant: Assistant) {
-  if (assistant.scope === 'organization') return `${assistant.name} · 组织共享`
+  if (assistant.scope === 'organization') return `${assistant.name} · 组织分配`
   if (assistant.userId === platform.currentUser.id) return assistant.name
   const owner = platform.users.find(user => user.id === assistant.userId)
   return `${assistant.name} · ${owner?.name ?? '成员'}共享`
@@ -331,6 +344,7 @@ function removeContext() {
   delete query.context
   delete query.workbench
   delete query.record
+  delete query.etDrawing
   void router.replace({ path: route.path, query })
 }
 
@@ -390,9 +404,9 @@ async function send() {
   const previousRequest = previousReply?.role === 'assistant' ? previousReply.automationRequest : undefined
   const scheduling = automationMode.value || !!previousRequest || isAutomationRequest(text)
   const id = conversation.value?.id ?? platform.createConversation(selectedAssistant.value,
-    text.replace(/\s+/g, ' ').slice(0, 28), { spaceId: directory.spaceId, folderId: directory.folderId })
+    text.replace(/\s+/g, ' ').slice(0, 28), { spaceId: directory.spaceId, folderId: directory.folderId }, etDrawingLaunchId.value)
   if (!id) {
-    ElMessage.warning('当前工作目录不可用，请重新选择')
+    ElMessage.warning('会话绑定已失效，请检查助理、工作目录和引用上下文')
     return
   }
   pendingId.value = id
@@ -461,6 +475,10 @@ function openArtifact(messageId: string) {
         </section>
 
         <section v-else class="thread" :aria-label="'会话消息 · ' + conversation.title" role="log">
+          <div v-if="boundDrawing && platform.canUseEtDrawingContext(boundDrawing)" class="drawing-conversation-context">
+            <span><FileText :size="14" aria-hidden="true" />{{ boundDrawing.drawingName }} · {{ boundDrawing.scope }} · {{ boundDrawing.entityCount }} 个实体</span>
+            <RouterLink :to="drawingWorkbenchLocation">返回 ET 设计工作台</RouterLink>
+          </div>
           <article v-for="message in conversation.messages" :key="message.id" class="message" :class="'is-' + message.role">
             <div class="message-body">
               <div v-if="message.references?.length" class="message-references">
@@ -544,7 +562,13 @@ function openArtifact(messageId: string) {
               :placeholder="automationMode ? '输入执行时间和任务内容…' : '给助理发消息，输入 @ 引用文件'"
               @input="updateMention" @compositionend="updateMention" @keydown.enter="handleEnter"
               @keydown.down="navigateReferences($event, 1)" @keydown.up="navigateReferences($event, -1)"></textarea>
-            <p v-if="bindingIssue" class="binding-issue" role="status">{{ bindingIssue }}请重新选择。</p>
+            <p v-if="bindingIssue" class="binding-issue" role="status">
+              {{ bindingIssue }}
+              <button v-if="etDrawingLaunchId && !drawingDraft" type="button" @click="removeContext">移除图纸引用</button>
+            </p>
+            <p v-if="activeAssistant && unavailableBindings" class="binding-issue" role="status">
+              当前助理有 {{ unavailableBindings }} 项资源未授权或已失效。<RouterLink :to="{ name: 'personal-assistant-configuration', params: { id: activeAssistant.id }, query: { scope: activeAssistant.scope === 'organization' || activeAssistant.userId !== platform.currentUser.id ? 'shared' : 'own' } }">查看助理配置</RouterLink>
+            </p>
             <div ref="composerToolbar" class="composer-toolbar">
               <el-popover :visible="referenceMenuOpen" placement="top-start" :width="310" :teleported="false">
                 <template #reference>
@@ -704,6 +728,11 @@ function openArtifact(messageId: string) {
 }
 .binding-issue { padding: 10px; color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: 9px; }
 .binding-issue a { color: var(--accent); margin-inline: 4px; }
+.drawing-conversation-context { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 12px; margin-bottom: 12px; padding: 8px 10px; background: var(--surface-muted); border-radius: 8px; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.drawing-conversation-context span { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
+.drawing-conversation-context svg { flex: none; }
+.drawing-conversation-context a { color: var(--accent); }
+.composer .binding-issue button { padding: 0; border: 0; background: none; color: var(--accent); cursor: pointer; }
 .archived-conversation { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; }
 .archived-conversation button { padding: 2px 4px; border: 0; background: transparent; color: var(--accent); }
 .composer .binding-issue { margin: 0 0 5px; padding: 3px 7px; border: 0; font-size: 12px; }

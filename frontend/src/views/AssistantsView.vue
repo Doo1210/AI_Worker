@@ -43,6 +43,7 @@ const assistantCards = computed(() => {
       description: assistant.description,
       source,
       canConfigure: isOwn,
+      canInspect: !isOwn,
       icon: isOwn ? User : Share,
       summary: summarizeResources(resources) || (isOwn && !assistant.resourceIds.length ? '未绑定资源' : '暂无可见资源'),
     }
@@ -50,7 +51,7 @@ const assistantCards = computed(() => {
   if (showBuiltInAssistant.value) {
     cards.unshift({
       id: 'default', name: generalAssistantName, description: generalDescription,
-      source: '平台内置', canConfigure: false, icon: Star, summary: generalResourceSummary,
+      source: '平台内置', canConfigure: false, canInspect: false, icon: Star, summary: generalResourceSummary,
     })
   }
   return cards
@@ -100,7 +101,7 @@ function useAssistant(id: string) {
 }
 
 function sharedSource(assistant: Assistant) {
-  if (assistant.scope === 'organization') return '组织共享'
+  if (assistant.scope === 'organization') return '组织分配'
   const member = platform.users.find((user) => user.id === assistant.userId)
   return member ? member.name + '共享' : '成员共享'
 }
@@ -155,6 +156,8 @@ function summarizeResources(resources: Resource[]) {
               :aria-label="`配置：${card.name}`">
               <el-icon aria-hidden="true"><Setting /></el-icon><span>配置</span>
             </RouterLink>
+            <RouterLink v-else-if="card.canInspect" :to="configurationLocation(card.id)" class="el-button"
+              :aria-label="`查看配置：${card.name}`">查看配置</RouterLink>
           </div>
         </div>
       </article>

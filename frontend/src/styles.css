@@ -115,13 +115,14 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible { outline: 2px s
   position: absolute; top: -3px; right: 0; padding: 1px 5px; border: 1px solid #bed0ff; border-radius: 4px;
   background: #e5edff; color: #2549b9; font-size: 11px; font-weight: 700; line-height: 1.3; white-space: nowrap;
 }
-.header-tabs { display: flex; align-items: center; gap: 4px; }
+.header-tabs { display: flex; align-items: center; gap: 8px; }
 .header-tab {
-  display: flex; align-items: center; justify-content: center; min-height: 34px; padding: 5px 14px;
-  border-radius: 7px; color: #58647a; font-size: 14px; font-weight: 600; white-space: nowrap;
+  display: flex; align-items: center; justify-content: center; gap: 7px; min-height: 40px; padding: 5px 14px;
+  border-radius: 8px; color: var(--text); font-size: 15px; font-weight: 650; white-space: nowrap;
 }
+.header-tab > svg { flex: none; }
 .header-tab:hover, .header-tab.current-area { background: var(--soft); color: var(--accent); }
-.header-tab.current-area { font-weight: 680; }
+.header-tab.current-area { font-weight: 700; }
 .header-tab:focus-visible { outline-offset: 0; }
 .header-actions { display: flex; align-items: center; flex: none; gap: 10px; margin-left: auto; }
 .mode-action { display: flex; align-items: center; gap: 6px; min-height: 34px; padding: 6px 9px; color: #515c75; border-radius: 7px; font-size: 13px; white-space: nowrap; }
@@ -357,6 +358,13 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible { outline: 2px s
   .new-chat { transition: background-color 140ms ease, border-color 140ms ease; }
 }
 
+@media (max-width: 920px) {
+  .shell-header { gap: 8px; padding-inline: 12px; }
+  .header-tabs { gap: 4px; }
+  .header-tab { gap: 5px; padding-inline: 8px; font-size: 14px; }
+  .admin-mode .mode-action span { display: none; }
+}
+
 @media (max-width: 800px) {
   .brand-link { width: auto; }
 }
@@ -370,8 +378,9 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible { outline: 2px s
   .brand-wordmark { display: none; }
   .brand-logo.has-badge { padding-right: 26px; }
   .brand-badge { padding-inline: 3px; font-size: 10px; }
-  .header-tabs { gap: 1px; }
-  .header-tab { padding: 4px 6px; font-size: 12px; }
+  .header-tabs { gap: 2px; }
+  .header-tab { min-height: 34px; padding: 4px 6px; font-size: 13px; }
+  .header-tab > svg { width: 14px; height: 14px; }
   .header-actions { gap: 3px; }
   .mode-action { padding-inline: 6px; }
   .mode-action span, .account-chevron { display: none; }
@@ -383,7 +392,12 @@ button:focus-visible, a:focus-visible, [tabindex]:focus-visible { outline: 2px s
   .shell-main { grid-column: 1 / -1; }
 }
 
-@media (max-width: 400px) {
+@media (max-width: 560px) {
+  .admin-mode .header-tab > svg { display: none; }
+}
+
+@media (max-width: 460px) {
+  .header-tab > svg { display: none; }
   .admin-mode { --shell-header-height: 86px; }
   .admin-mode .shell-header { display: grid; grid-template: 48px 37px / auto minmax(0, 1fr) auto; gap: 0 5px; }
   .admin-mode .brand-link { justify-self: start; }

@@ -3,9 +3,9 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from
 import { useRoute, useRouter } from 'vue-router'
 import {
   Activity, ArrowLeft, Bot, Boxes, Calculator, Check, ChevronDown, ChevronLeft, ChevronRight, Clock,
-  FolderOpen, History, LayoutDashboard, LayoutGrid, Menu, Package, PenTool, Plug, Plus, Settings2, ShieldCheck, Ship, UsersRound, X,
+  FileSearch, FolderOpen, Gauge, History, LayoutDashboard, LayoutGrid, LibraryBig, ListChecks, Menu, Network,
+  Package, PanelsTopLeft, PenTool, Plug, Plus, Settings2, ShieldCheck, Ship, UsersRound, X,
 } from 'lucide-vue-next'
-import { FileSearch, ListChecks, PanelsTopLeft } from 'lucide-vue-next'
 import EmployeesSidebar from '@/components/EmployeesSidebar.vue'
 import EmployeeRecentContacts from '@/components/EmployeeRecentContacts.vue'
 import ConversationHistory from '@/components/ConversationHistory.vue'
@@ -13,7 +13,6 @@ import { adminCatalogs } from '@/adminCatalogs'
 import { resourceLibraryLocation, resourceTypeFromQuery, resourceTypeItems } from '@/resourceNavigation'
 import { usePlatformStore } from '@/stores/platform'
 import { useOrganizationAdminStore } from '@/stores/organizationAdmin'
-import { fileCenterName } from '@/workspaceDirectory'
 
 const store = usePlatformStore()
 const organization = useOrganizationAdminStore()
@@ -33,9 +32,9 @@ try {
 const isCompact = computed(() => sidebarCollapsed.value && !isMobile.value)
 const sidebarAction = computed(() => isCompact.value ? '展开导航栏' : '收起导航栏')
 const portalTabs = [
-  { id: 'work', name: '工作区', home: '/work/chat' },
-  { id: 'employees', name: 'AI 员工', home: '/employees' },
-  { id: 'resources', name: '资源库', home: '/work/resources' },
+  { id: 'work', name: '工作区', home: '/work/chat', icon: PanelsTopLeft },
+  { id: 'employees', name: 'AI 员工', home: '/employees', icon: UsersRound },
+  { id: 'resources', name: '资源库', home: '/work/resources', icon: LibraryBig },
 ] as const
 type PortalTab = (typeof portalTabs)[number]['id']
 const lastPortalPage = reactive<Record<PortalTab, string>>({
@@ -44,22 +43,22 @@ const lastPortalPage = reactive<Record<PortalTab, string>>({
   resources: portalTabs[2].home,
 })
 const adminTabs = [
-  { id: 'overview', name: '运行监管', items: [
+  { id: 'overview', name: '运行监管', icon: Gauge, items: [
     { name: '运行总览', path: '/admin/overview', icon: LayoutDashboard, route: 'admin-overview' },
     { name: '助理与工作台运行', path: '/admin/activity', icon: Activity, route: 'admin-activity' },
     { name: '用量与费用', path: '/admin/usage', icon: Calculator, route: 'admin-usage' },
     { name: 'AI 员工运行', path: '/admin/runs', icon: Bot, route: 'admin-scenario-runs' },
   ] },
-  { id: 'organization', name: '组织管理', items: [
+  { id: 'organization', name: '组织管理', icon: Network, items: [
     { name: '组织与成员', path: '/admin/members', icon: UsersRound, route: 'admin-members' },
     { name: '角色与权限', path: '/admin/roles', icon: ShieldCheck, route: 'admin-roles' },
   ] },
-  { id: 'capabilities', name: '能力与资源', items: [
+  { id: 'capabilities', name: '能力与资源', icon: Boxes, items: [
     { name: adminCatalogs['admin-workbenches'].title, path: '/admin/workbenches', icon: LayoutGrid, route: 'admin-workbenches' },
     { name: adminCatalogs['admin-employees'].title, path: '/admin/employees', icon: Bot, route: 'admin-employees' },
     { name: adminCatalogs['admin-resources'].title, path: '/admin/resources', icon: Boxes, route: 'admin-resources' },
   ] },
-  { id: 'system', name: '平台管理', items: [
+  { id: 'system', name: '平台管理', icon: Settings2, items: [
     { name: '插件接入', path: '/admin/plugins', icon: Package, route: 'admin-plugins' },
     { name: '系统连接', path: '/admin/connections', icon: Plug, route: 'admin-connections' },
     { name: '变更记录', path: '/admin/changes', icon: History, route: 'admin-changes' },
@@ -83,8 +82,12 @@ const adminItems = computed(() => adminTab.value.items.filter(item => organizati
 const activeTab = computed(() => isAdmin.value ? adminTab.value.id : portalTab.value)
 const headerTabs = computed(() => isAdmin.value
   ? adminTabs.filter(tab => tab.items.some(item => organization.canVisitAdmin(item.route)))
-    .map(tab => ({ id: tab.id, name: tab.name, to: tab.items.some(item => organization.canVisitAdmin(item.route) && lastAdminPage[tab.id].startsWith(item.path)) ? lastAdminPage[tab.id] : tab.items.find(item => organization.canVisitAdmin(item.route))!.path }))
-  : portalTabs.map(({ id, name }) => ({ id, name, to: lastPortalPage[id] })))
+    .map(tab => ({
+      id: tab.id, name: tab.name, icon: tab.icon,
+      to: tab.items.some(item => organization.canVisitAdmin(item.route) && lastAdminPage[tab.id].startsWith(item.path))
+        ? lastAdminPage[tab.id] : tab.items.find(item => organization.canVisitAdmin(item.route))!.path,
+    }))
+  : portalTabs.map(({ id, name, icon }) => ({ id, name, icon, to: lastPortalPage[id] })))
 const activeResourceType = computed(() => resourceTypeFromQuery(route.query))
 const enterAdminLabel = '管理后台'
 const returnToPortalLabel = '返回工作门户'
@@ -93,7 +96,7 @@ const workspacePath = '/work/workspace'
 const isWorkspace = computed(() => route.path === workspacePath)
 const workItems = computed(() => [
   { name: '我的助理', to: '/work/assistants', icon: Bot, active: route.path.startsWith('/work/assistants') },
-  { name: fileCenterName, to: isWorkspace.value ? route.fullPath : workspacePath, icon: FolderOpen, active: isWorkspace.value },
+  { name: '工作空间', to: isWorkspace.value ? route.fullPath : workspacePath, icon: FolderOpen, active: isWorkspace.value },
   { name: '自动化任务', to: '/work/automations', icon: Clock, active: route.name === 'personal-automations' },
 ])
 
@@ -170,8 +173,11 @@ function switchAccount(id: string) {
         </span>
       </RouterLink>
       <nav class="header-tabs" :aria-label="isAdmin ? '管理后台区域' : '工作门户区域'">
-        <RouterLink v-for="tab in headerTabs" :key="tab.id" :to="tab.to" class="header-tab" :class="{ 'current-area': activeTab === tab.id }" :aria-current-value="activeTab === tab.id ? 'location' : 'false'" @click="mobileMenu = false">
-          {{ tab.name }}
+        <RouterLink v-for="tab in headerTabs" :key="tab.id" :to="tab.to" class="header-tab"
+          :class="{ 'current-area': activeTab === tab.id }" :aria-current="activeTab === tab.id ? 'location' : undefined"
+          @click="mobileMenu = false">
+          <component :is="tab.icon" :size="16" :stroke-width="1.8" aria-hidden="true" />
+          <span>{{ tab.name }}</span>
         </RouterLink>
       </nav>
 

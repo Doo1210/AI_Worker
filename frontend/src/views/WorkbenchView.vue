@@ -91,7 +91,7 @@ watch([workbenchId, () => store.currentUser?.id], () => {
 <template>
   <section class="page-surface workbench-page page-with-control-inset" :aria-label="workbench?.name ?? '工作台'">
     <template v-if="workbench">
-      <EtDesignWorkbench v-if="isDesignCanvas" :page-title="workbench.name" />
+      <EtDesignWorkbench v-if="isDesignCanvas" :key="store.currentUser.id" :page-title="workbench.name" />
       <DesignStudioWorkbench v-else-if="isDesignStudio" :key="store.currentUser.id" :user-id="store.currentUser.id" :page-title="workbench.name" />
       <CostWorkbench v-else-if="isCostWorkbench" :page-title="workbench.name" />
       <TenderWorkbench v-else-if="workbench.id === TENDER_WORKBENCH_ID" :key="store.currentUser.id" :user-id="store.currentUser.id" :page-title="workbench.name" />

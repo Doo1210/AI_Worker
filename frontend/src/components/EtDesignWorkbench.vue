@@ -5,9 +5,10 @@ import { computed, nextTick, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { CircleAlert, CircleCheck, ClipboardCheck, Download, FileBox, FolderOpen, Send, Sparkles } from 'lucide-vue-next'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { usePlatformStore, type WorkspaceFile } from '@/stores/platform'
+import { usePlatformStore, type EtDrawingContext, type WorkspaceFile } from '@/stores/platform'
 import { ET_DESIGN_WORKBENCH_ID } from '@/stores/sample'
 import { useEtDrawingReviewStore } from '@/stores/etDrawingReview'
+import { etWorkspaceId } from '@/stores/sharedWorkspaces'
 import { etReviewId, etReviewTitle, useScenarioTaskStore } from '@/stores/scenarioTasks'
 import { useWorkbenchAssistant } from '@/workbenchAssistant'
 import { fileCenterName } from '@/workspaceDirectory'
@@ -316,12 +317,7 @@ function exportDrawing(format: Format) {
   ElMessage.success(`已生成 ${format} 文件`)
 }
 
-async function askDrawing(text = question.value) {
-  const current = drawing.value
-  const prompt = text.trim()
-  if (!current || !prompt) return
-
-  const assistantName = assistant.value?.name ?? fallbackAssistant
+function drawingContext(current: Drawing): EtDrawingContext {
   const entities = selection.value.length ? selection.value : current.entities
   const scope = selection.value.length ? '当前框选范围' : '整张图纸预览'
   const entityTypes = new Map<string, number>()
@@ -331,16 +327,41 @@ async function askDrawing(text = question.value) {
     entityLayers.set(layer, (entityLayers.get(layer) ?? 0) + 1)
   }
   const counts = (items: Map<string, number>) => [...items].map(([label, count]) => `${label}（${count}）`).join('、')
-  let answer = `《${current.name}》的${scope}包含 ${entities.length} 个实体，分布于 ${entityLayers.size} 个图层。\n实体类型：${counts(entityTypes)}。\n范围宽高约为 ${describeSize(entities)}。`
+  return { drawingName: current.name, reviewVersion: reviewVersion.value, scope, entityCount: entities.length,
+    layerCount: entityLayers.size, layers: counts(entityLayers), types: counts(entityTypes), dimensions: describeSize(entities) }
+}
+
+function openDrawingConversation() {
+  if (!drawing.value) return
+  const context = drawingContext(drawing.value)
+  const layers = context.layers.length > 500 ? context.layers.slice(0, 500) + '…' : context.layers
+  const launch = platform.prepareEtDrawingConversation({ ...context, layers })
+  if (!launch) {
+    ElMessage.warning('当前账号无法在会话中引用此图纸')
+    return
+  }
+  void router.push({ path: '/work/chat', query: {
+    etDrawing: launch, assistant: assistant.value?.id, space: context.reviewVersion ? etWorkspaceId : undefined,
+  } })
+}
+
+async function askDrawing(text = question.value) {
+  const current = drawing.value
+  const prompt = text.trim()
+  if (!current || !prompt) return
+
+  const assistantName = assistant.value?.name ?? fallbackAssistant
+  const { scope, entityCount, layerCount, layers, types, dimensions } = drawingContext(current)
+  let answer = `《${current.name}》的${scope}包含 ${entityCount} 个实体，分布于 ${layerCount} 个图层。\n实体类型：${types}。\n范围宽高约为 ${dimensions}。`
   if (/检查|交付|出图/.test(prompt)) {
     if (reviewVersion.value && review.canEdit) {
       makeChecklist()
       answer = `检查清单草稿可在上方查看。请结合图层依据核对，再确认保存到 ${etReviewId}。`
     } else {
-      answer = `根据《${current.name}》的${scope}整理出图检查项。\n\n1. 核对 ${entityLayers.size} 个图层的命名、可见性与打印设置。\n2. 对照原图复核关键尺寸、单位、标注和版本号。\n3. 按交付要求导出 DXF、HTML 或 SVG，并重新打开文件复核内容。`
+      answer = `根据《${current.name}》的${scope}整理出图检查项。\n\n1. 核对 ${layerCount} 个图层的命名、可见性与打印设置。\n2. 对照原图复核关键尺寸、单位、标注和版本号。\n3. 按交付要求导出 DXF、HTML 或 SVG，并重新打开文件复核内容。`
     }
   } else if (/图层|实体/.test(prompt)) {
-    answer = `《${current.name}》的${scope}共有 ${entities.length} 个实体。\n图层：${counts(entityLayers)}。\n实体类型：${counts(entityTypes)}。`
+    answer = `《${current.name}》的${scope}共有 ${entityCount} 个实体。\n图层：${layers}。\n实体类型：${types}。`
   } else if (!/概览|范围|宽|高|尺寸|数量|多少/.test(prompt)) {
     answer = `当前演示可根据《${current.name}》的${scope}汇总图层、实体数量和范围宽高，也可以生成出图检查清单。请试试下方的提问示例。`
   }
@@ -472,6 +493,7 @@ async function askDrawing(text = question.value) {
             <span :title="drawing.name">{{ reviewVersion ? `${etReviewId} · ${reviewVersion}` : drawing.name }}</span>
             <strong>{{ selection.length ? `框选 ${selection.length} 个` : '整张图纸' }}</strong>
           </div>
+          <button v-if="drawing" type="button" class="et-review-button drawing-conversation-button" @click="openDrawingConversation">带图纸进入会话</button>
           <p v-if="drawing?.skipped" class="format-detail">问图统计仅覆盖当前可预览的实体。</p>
           <section v-if="reviewVersion && review.canEdit" class="et-checklist" aria-label="出图检查清单">
             <div class="et-checklist-header">
@@ -611,6 +633,7 @@ async function askDrawing(text = question.value) {
 .drawing-context svg, .drawing-context strong { flex: none; }
 .drawing-context span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .drawing-context strong { margin-left: auto; font-weight: 600; }
+.drawing-conversation-button { align-self: flex-start; margin-top: 6px; }
 .chat-log { display: flex; flex: 1; flex-direction: column; gap: 8px; min-height: 105px; padding: 12px 1px; overflow: auto; }
 .chat-log p { margin: 0; padding: 9px; border-radius: 8px; background: #f3f5fa; font-size: 13px; line-height: 1.65; overflow-wrap: anywhere; white-space: pre-wrap; }
 .chat-log .chat-welcome { color: #596780; }

@@ -6,7 +6,7 @@ import { ArrowRight, Collection, Plus, Search } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { resourceLibraryLocation, resourceScopeFromQuery, resourceTypeFromQuery, resourceTypeItems, resourceTypes, type ResourceScopeFilter } from '@/resourceNavigation'
 import { resourceUnavailableReason } from '@/resourceAvailability'
-import { makeId, usePlatformStore, type Resource } from '@/stores/platform'
+import { usePlatformStore, type Resource } from '@/stores/platform'
 import { useOrganizationAdminStore } from '@/stores/organizationAdmin'
 
 const route = useRoute()
@@ -37,6 +37,8 @@ const name = ref('')
 const description = ref('')
 const resourceType = ref<Resource['type']>('知识')
 const resourceStatus = ref<Resource['status']>('可用')
+const recipientIds = ref<string[]>([])
+const recipients = computed(() => platform.users.filter(user => user.id !== platform.currentUser.id && user.status !== 'disabled'))
 const selectedResource = computed(() => platform.visibleResources.find(resource => resource.id === resourceId.value))
 const ownerLabel = computed(() => {
   const resource = selectedResource.value
@@ -49,7 +51,6 @@ const accessLabel = computed(() => {
   const resource = selectedResource.value
   if (!resource) return ''
   if (canEdit(resource)) return '归我所有，可编辑'
-  if (isOwnResource(resource)) return '归我所有，已共享'
   return '已获共享使用权'
 })
 const reason = computed(() => resourceUnavailableReason(selectedResource.value))
@@ -65,7 +66,7 @@ const dependencies = computed(() => {
         kind: '助理',
         to: platform.myAssistants.some(item => item.id === assistant.id)
           ? { name: 'personal-assistant-configuration', params: { id: assistant.id }, query: { scope: 'own' } }
-          : { path: '/work/assistants', query: { scope: 'shared' } },
+          : { name: 'personal-assistant-configuration', params: { id: assistant.id }, query: { scope: 'shared' } },
       })),
     ...platform.visibleEmployees
       .filter(employee => employee.resourceIds.includes(id))
@@ -109,12 +110,12 @@ function isOwnResource(resource: Resource) {
 }
 
 function canEdit(resource: Resource) {
-  return resource.scope === 'personal' && isOwnResource(resource)
+  return isOwnResource(resource)
 }
 
 function source(resource: Resource) {
   if (resource.scope === 'personal') return '个人资源'
-  if (resource.scope === 'organization') return '组织共享'
+  if (resource.scope === 'organization') return '组织分配'
   if (isOwnResource(resource)) return '个人资源 · 已共享'
   const owner = platform.users.find((user) => user.id === resource.ownerId)
   return owner ? owner.name + '共享' : '成员共享'
@@ -127,31 +128,24 @@ function open(resource?: Resource) {
   description.value = resource?.description ?? ''
   resourceType.value = resource?.type ?? typeFilter.value ?? '知识'
   resourceStatus.value = resource?.status ?? '可用'
+  recipientIds.value = resource?.allowedUserIds.filter(id => recipients.value.some(user => user.id === id)) ?? []
   dialogOpen.value = true
 }
 
 function save() {
   if (detailMode.value || !name.value.trim()) return
-  const resource = platform.resources.find((item) => item.id === resourceId.value && canEdit(item))
-  if (resourceId.value && !resource) {
-    ElMessage.error('此资源当前不可编辑')
-    return
-  }
-  const fields = {
-    name: name.value.trim(),
-    description: description.value.trim(),
+  const resource = platform.savePersonalResource({
+    name: name.value,
+    description: description.value,
     type: resourceType.value,
     status: resourceStatus.value,
+    allowedUserIds: recipientIds.value,
+  }, resourceId.value || undefined)
+  if (!resource) {
+    ElMessage.error('无法保存资源，请检查编辑权限和共享成员')
+    return
   }
-  if (resource) Object.assign(resource, fields)
-  else {
-    platform.resources.push({
-      ...fields,
-      id: makeId('resource'),
-      scope: 'personal',
-      ownerId: platform.currentUser.id,
-      allowedUserIds: [platform.currentUser.id],
-    })
+  if (!resourceId.value) {
     void router.replace(resourceLibraryLocation({
       ...route.query,
       scope: scopeFilter.value === 'shared' ? 'own' : scopeFilter.value,
@@ -159,7 +153,7 @@ function save() {
     }, resourceType.value))
   }
   dialogOpen.value = false
-  ElMessage.success(resource ? '资源已更新' : '已添加个人资源')
+  ElMessage.success(resourceId.value ? '资源已更新' : '已添加个人资源')
 }
 
 </script>
@@ -225,6 +219,12 @@ function save() {
             <el-form-item label="状态"><el-select v-model="resourceStatus"><el-option v-for="status in statuses" :key="status" :value="status" :label="status" /></el-select></el-form-item>
           </div>
           <el-form-item label="用途说明"><el-input v-model="description" type="textarea" :rows="4" maxlength="400" placeholder="说明这项资源能用于哪些工作。" /></el-form-item>
+          <el-form-item label="共享成员">
+            <el-select v-model="recipientIds" aria-label="共享成员" multiple filterable clearable placeholder="选择可使用资源的成员">
+              <el-option v-for="user in recipients" :key="user.id" :value="user.id" :label="user.name + ' · ' + user.department" />
+            </el-select>
+            <p class="resource-sharing-hint muted">共享后，成员可在资源库查看并绑定到自己的助理。移除成员并保存即可收回。</p>
+          </el-form-item>
         </el-form>
         <section v-if="selectedResource" class="resource-dependencies" aria-label="配置引用">
           <h3>配置引用</h3>
@@ -265,6 +265,7 @@ function save() {
 .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .form-row .el-select { width: 100%; }
 .resource-dialog-body { max-height: 65dvh; overflow-y: auto; padding: 0 4px; }
+.resource-sharing-hint { margin: 6px 0 0; line-height: 1.5; font-size: 12px; }
 .resource-summary { border-bottom: 1px solid var(--line); padding-bottom: 12px; margin-bottom: 13px; }
 .resource-summary h2 { margin: 0 0 10px; font-size: 17px; overflow-wrap: anywhere; }
 .resource-summary dl { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 12px; margin: 0; }

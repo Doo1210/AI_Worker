@@ -25,11 +25,14 @@ const sections = sectionGroups.flatMap(group => group.items)
 const section = ref<Section>('information')
 const sectionTitle = computed(() => sections.find(item => item.id === section.value)?.label)
 const resourceType = computed(() => resourceOrder.find(type => type === section.value))
-const resourceSource: Record<Resource['scope'], string> = { personal: '个人资源', shared: '成员共享', organization: '组织共享' }
+const resourceSource: Record<Resource['scope'], string> = { personal: '个人资源', shared: '成员共享', organization: '组织分配' }
 const listLocation = computed(() => ({
   name: 'personal-assistants', query: { scope: route.query.scope, q: route.query.q },
 }))
 const assistant = computed(() => platform.myAssistants.find(item => item.id === route.params.id))
+const sharedAssistant = computed(() => platform.sharedAssistants.find(item => item.id === route.params.id))
+const sharedBindings = computed(() => sharedAssistant.value ? platform.assistantResourceBindings(sharedAssistant.value.id) : [])
+const skippedBindings = computed(() => sharedBindings.value.filter(binding => binding.status !== '可用').length)
 const draft = ref<AssistantDraft>(copyDraft())
 const savedDraft = ref('')
 const nameError = ref('')
@@ -143,18 +146,37 @@ function tryAssistant() {
   if (!id || (dirty.value && !save())) return
   void router.push({ path: '/work/chat', query: { assistant: id } })
 }
+
+function copyAssistant() {
+  const source = sharedAssistant.value
+  if (!source) return
+  const skipped = skippedBindings.value
+  const copy = platform.copySharedAssistant(source.id)
+  if (!copy) {
+    ElMessage.warning('此共享助理当前不可复制')
+    return
+  }
+  ElMessage.success(skipped ? `已创建副本，${skipped} 项资源待补齐` : '已复制为我的助理')
+  void router.push({ name: 'personal-assistant-configuration', params: { id: copy.id }, query: { scope: 'own' } })
+}
 </script>
 
 <template>
   <section class="page-surface page-with-control-inset" aria-label="配置助理">
-    <PageHeader :title="assistant?.name ?? '配置助理'">
+    <PageHeader :title="assistant?.name ?? sharedAssistant?.name ?? '配置助理'">
       <template #back>
         <RouterLink :to="listLocation" class="assistant-back"><ArrowLeft :size="15" aria-hidden="true" />我的助理</RouterLink>
       </template>
-      <template v-if="assistant" #actions>
-        <span class="save-status muted" aria-live="polite">{{ dirty ? '有未保存的修改' : '已保存' }}</span>
-        <el-button @click="tryAssistant">{{ dirty ? '保存并试用' : '试用' }}</el-button>
-        <el-button type="primary" native-type="submit" form="assistant-configuration-form" :disabled="!dirty">保存配置</el-button>
+      <template #actions>
+        <template v-if="assistant">
+          <span class="save-status muted" aria-live="polite">{{ dirty ? '有未保存的修改' : '已保存' }}</span>
+          <el-button @click="tryAssistant">{{ dirty ? '保存并试用' : '试用' }}</el-button>
+          <el-button type="primary" native-type="submit" form="assistant-configuration-form" :disabled="!dirty">保存配置</el-button>
+        </template>
+        <template v-else-if="sharedAssistant">
+          <RouterLink :to="{ path: '/work/chat', query: { assistant: sharedAssistant.id } }" class="el-button">对话</RouterLink>
+          <el-button type="primary" @click="copyAssistant">复制为我的助理</el-button>
+        </template>
       </template>
     </PageHeader>
 
@@ -258,6 +280,29 @@ function tryAssistant() {
         </template>
       </el-form>
     </div>
+    <div v-else-if="sharedAssistant" class="page-body">
+      <section class="panel assistant-config-form shared-assistant-details" aria-label="只读助理配置">
+        <div class="section-header">
+          <h2 class="section-title">共享助理配置</h2>
+          <el-tag effect="plain" type="info">只读</el-tag>
+        </div>
+        <p v-if="sharedAssistant.description" class="muted">{{ sharedAssistant.description }}</p>
+        <h3 class="section-title">工作指令</h3>
+        <p class="shared-instructions">{{ sharedAssistant.instructions || '未设置工作指令' }}</p>
+        <h3 class="section-title">模型与资源</h3>
+        <ul v-if="sharedBindings.length" class="binding-list">
+          <li v-for="(binding, index) in sharedBindings" :key="index" class="binding-row">
+            <div class="binding-info">
+              <strong>{{ binding.resource?.name ?? binding.type ?? '资源' }}</strong>
+              <span v-if="binding.resource" class="binding-meta">{{ binding.type }} · {{ resourceSource[binding.resource.scope] }}</span>
+            </div>
+            <el-tag size="small" effect="plain" :type="binding.status === '可用' ? 'success' : 'warning'">{{ binding.status }}</el-tag>
+          </li>
+        </ul>
+        <p v-else class="muted">未绑定资源</p>
+        <p class="sharing-note muted">{{ skippedBindings ? `复制会跳过 ${skippedBindings} 项未授权或失效的资源，可在副本中添加本人可用的资源。` : '复制后可在个人副本中独立修改配置。' }}</p>
+      </section>
+    </div>
     <div v-else class="page-body">
       <el-empty description="该助理不存在或当前账号没有配置权限" :image-size="84">
         <RouterLink :to="listLocation" class="el-button">返回我的助理</RouterLink>
@@ -295,6 +340,8 @@ function tryAssistant() {
 .section-count { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .assistant-section-select { display: none; }
 .assistant-config-form { width: min(100%, 820px); min-width: 0; padding: 16px; }
+.shared-assistant-details { overflow-wrap: anywhere; }
+.shared-instructions { white-space: pre-wrap; }
 .assistant-config-form :deep(.el-form-item:last-child) { margin-bottom: 0; }
 .section-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 24px; margin-bottom: 12px; }
 .section-header .section-title { margin: 0; }

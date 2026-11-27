@@ -1,6 +1,6 @@
 import { capabilityNodes, dependencyIssues } from '@/adminDependencies'
 import { useAdminUsageStore } from './adminUsage'
-import { computed, reactive, toRefs, watch } from 'vue'
+import { computed, reactive, shallowRef, toRefs, watch } from 'vue'
 import { defineStore } from 'pinia'
 import {
   ET_DESIGN_ASSISTANT_ID, ET_DESIGN_WORKBENCH_ID,
@@ -14,7 +14,7 @@ import { draftOfficeDocument } from '@/officeDocument'
 import { orderConversationsByActivity } from '@/conversationOrder'
 import { conversationDirectoryDisplay, workspaceFolderTree, type ResolvedWorkspaceDirectory, type WorkspaceDirectory } from '@/workspaceDirectory'
 import { type OrganizationRole, type RoleAssignment } from './organizationRoles'
-import { useSharedWorkspacesStore } from './sharedWorkspaces'
+import { etWorkspaceId, useSharedWorkspacesStore } from './sharedWorkspaces'
 import {
   activeCapabilityVersion, activeConfiguration, capabilityVersions, captureCapabilityVersion,
   type AdminPlugin, type AdminChange, type AdminConnection, type OrganizationCapabilityFields, type OrganizationDepartment,
@@ -70,12 +70,24 @@ export interface Message {
 
 type AutomationReply = Pick<Message, 'text' | 'automationTaskId' | 'automationRequest'>
 
+export interface EtDrawingContext {
+  drawingName: string
+  reviewVersion?: 'V1' | 'V2'
+  scope: '当前框选范围' | '整张图纸预览'
+  entityCount: number
+  layerCount: number
+  layers: string
+  types: string
+  dimensions: string
+}
+
 export interface Conversation {
   id: string
   userId: string
   title: string
   readonly assistantId: string
   readonly directory?: WorkspaceDirectory
+  readonly etDrawing?: EtDrawingContext
   archived?: boolean
   messages: Message[]
   createdAt: string
@@ -383,6 +395,14 @@ function newMessage(role: Message['role'], text: string, extra: Partial<Message>
 
 const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms))
 
+function draftEtDrawingReply(prompt: string, drawing: EtDrawingContext) {
+  const version = drawing.reviewVersion ? `（${etWorkspaceId} · ${drawing.reviewVersion}）` : ''
+  const overview = `《${drawing.drawingName}》${version}的${drawing.scope}包含 ${drawing.entityCount} 个可预览实体，分布于 ${drawing.layerCount} 个图层。\n\n图层：${drawing.layers}。\n实体类型：${drawing.types}。\n范围宽高：${drawing.dimensions}。`
+  const checklist = /检查|交付|出图/.test(prompt)
+  const text = checklist ? overview + '\n\n1. 核对所列图层的命名、可见性和打印设置。\n2. 对照原图复核关键尺寸、单位、标注及版本。\n3. 导出后重新打开文件，确认交付内容和选区一致。' : overview
+  return { text, artifactName: checklist ? '图纸检查清单.md' : '图纸范围摘要.md', artifactContent: text }
+}
+
 function draftReply(prompt: string, name: string, sourceNames: string[], resourceNames: string[]) {
   const context = sourceNames.length ? `\n\n参考资料：${sourceNames.join('、')}` : ''
   const abilities = resourceNames.length ? `\n已选用的配置资源：${resourceNames.join('、')}` : ''
@@ -419,6 +439,7 @@ function draftReply(prompt: string, name: string, sourceNames: string[], resourc
 
 export const usePlatformStore = defineStore('platform', () => {
   const state = reactive(loadState())
+  const etDrawingLaunch = shallowRef<{ id: string; userId: string; context: EtDrawingContext }>()
   const pendingConversations = new Set<string>()
   const pendingThreads = new Set<string>()
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
@@ -465,6 +486,44 @@ export const usePlatformStore = defineStore('platform', () => {
 
   function setCurrentUser(id: string) {
     if (state.users.some(user => user.id === id && user.status !== 'disabled')) state.currentUserId = id
+  }
+
+  function savePersonalResource(draft: Pick<Resource, 'name' | 'description' | 'type' | 'status' | 'allowedUserIds'>, id?: string) {
+    const ownerId = currentUser.value.id
+    const existing = state.resources.find(item => item.id === id && item.scope !== 'organization' && item.ownerId === ownerId)
+    const name = draft.name.trim()
+    const allowedUserIds = [...new Set(draft.allowedUserIds)].filter(userId => userId !== ownerId)
+    if (!name || (id !== undefined && !existing)
+      || allowedUserIds.some(userId => !state.users.some(user => user.id === userId && user.status !== 'disabled'))) return
+    const scope = allowedUserIds.length ? 'shared' : 'personal'
+    const values = { name, description: draft.description.trim(), type: draft.type, status: draft.status, allowedUserIds, scope, ownerId } as const
+    if (existing) return Object.assign(existing, values)
+    const resource: Resource = { id: makeId('resource'), ...values }
+    state.resources.push(resource)
+    return resource
+  }
+
+  function assistantResourceBindings(id: string) {
+    const assistant = visibleAssistants.value.find(item => item.id === id)
+    if (!assistant) return []
+    const visible = new Map(visibleResources.value.map(resource => [resource.id, resource]))
+    const types = new Map(state.resources.map(resource => [resource.id, resource.type]))
+    return assistant.resourceIds.map(resourceId => {
+      const resource = visible.get(resourceId)
+      const type = types.get(resourceId)
+      const status = resource?.status === '可用' ? '可用' : !resource && type ? '未授权' : '已失效'
+      return { resource, type, status }
+    })
+  }
+
+  function copySharedAssistant(id: string) {
+    const source = sharedAssistants.value.find(item => item.id === id)
+    if (!source) return
+    const resourceIds = assistantResourceBindings(id).flatMap(({ resource, status }) => resource && status === '可用' ? [resource.id] : [])
+    return savePersonalAssistant({
+      name: source.name.slice(0, 32) + '（副本）', description: source.description,
+      instructions: source.instructions, resourceIds, allowedUserIds: [],
+    })
   }
 
   function saveAssistant(draft: AssistantDraft, scope: NonNullable<Assistant['scope']>, id?: string): Assistant | undefined {
@@ -604,15 +663,36 @@ export const usePlatformStore = defineStore('platform', () => {
     }
   }
 
-  function createConversation(assistantId: string, title = '新建会话', directory: WorkspaceDirectory = {}) {
-    if (!resolveConversationDirectory(directory)) return
+  function canUseEtDrawingContext(context: EtDrawingContext) {
+    return visibleWorkbenches.value.some(workbench => workbench.id === ET_DESIGN_WORKBENCH_ID)
+      && (!context.reviewVersion || useSharedWorkspacesStore().canAccess(etWorkspaceId))
+  }
+
+  function prepareEtDrawingConversation(context: EtDrawingContext) {
+    if (!canUseEtDrawingContext(context)) return
+    const id = makeId('drawing-context')
+    etDrawingLaunch.value = { id, userId: currentUser.value.id, context: { ...context } }
+    return id
+  }
+
+  function getEtDrawingLaunch(id: string) {
+    const launch = etDrawingLaunch.value
+    if (launch?.id === id && launch.userId === currentUser.value.id && canUseEtDrawingContext(launch.context)) return launch.context
+  }
+
+  function createConversation(assistantId: string, title = '新建会话', directory: WorkspaceDirectory = {}, etDrawingLaunchId?: string) {
+    const etDrawing = etDrawingLaunchId ? getEtDrawingLaunch(etDrawingLaunchId) : undefined
+    const assistantAvailable = visibleAssistants.value.some(assistant => assistant.id === assistantId)
+    if (!resolveConversationDirectory(directory) || (etDrawingLaunchId && (!etDrawing || !assistantAvailable))) return
     const id = makeId('chat')
     state.conversations.push({
       id, userId: currentUser.value.id, title,
-      assistantId: visibleAssistants.value.some(assistant => assistant.id === assistantId) ? assistantId : 'default',
+      assistantId: assistantAvailable ? assistantId : 'default',
       directory: { ...directory },
+      ...(etDrawing ? { etDrawing: { ...etDrawing } } : {}),
       messages: [], createdAt: nowIso(), updatedAt: nowIso(),
     })
+    if (etDrawing) etDrawingLaunch.value = undefined
     return id
   }
 
@@ -630,6 +710,7 @@ export const usePlatformStore = defineStore('platform', () => {
     const content = text.trim()
     if (!conversation || !content || pendingConversations.has(id)) return
     if (conversation.archived) throw new Error('请取消归档后继续会话。')
+    if (conversation.etDrawing && !canUseEtDrawingContext(conversation.etDrawing)) throw new Error('当前账号已无法使用会话中的图纸上下文。')
     const assistant = visibleAssistants.value.find(item => item.id === conversation.assistantId)
     if (!assistant) throw new Error('当前账号已无法使用此会话的助理。')
     const directory = resolveConversationDirectory(conversation.directory)
@@ -641,7 +722,8 @@ export const usePlatformStore = defineStore('platform', () => {
     }
     const allowedFiles = directory.files.filter(file => references.includes(file.id))
     const resources = visibleResources.value.filter(item => item.status === '可用' && assistant.resourceIds.includes(item.id))
-    const officeDocument = automationReply ? undefined : draftOfficeDocument(content, allowedFiles)
+    const officeDocument = automationReply ? undefined : conversation.etDrawing
+      ? draftEtDrawingReply(content, conversation.etDrawing) : draftOfficeDocument(content, allowedFiles)
     const reply = automationReply ? undefined
       : officeDocument ?? draftReply(content, assistant.id === 'default' ? '我' : assistant.name,
         allowedFiles.map(file => file.name), resources.map(resource => resource.name))
@@ -823,8 +905,9 @@ export const usePlatformStore = defineStore('platform', () => {
     ...toRefs(state), currentUser, myAssistants, sharedAssistants, organizationAssistants,
     visibleAssistants, myFiles, myFolders,
     visibleResources, personalConversations, visibleEmployees, employeeThreads, myTasks, visibleWorkbenches,
-    setCurrentUser, savePersonalAssistant, saveOrganizationAssistant,
+    setCurrentUser, savePersonalResource, assistantResourceBindings, copySharedAssistant, savePersonalAssistant, saveOrganizationAssistant,
     createWorkspaceFolder, renameWorkspaceEntry, moveWorkspaceEntry, deleteWorkspaceEntry,
+    canUseEtDrawingContext, prepareEtDrawingConversation, getEtDrawingLaunch,
     resolveConversationDirectory, createConversation, setConversationArchived, sendConversationMessage, saveMessageFile,
     startEmployeeThread, sendEmployeeMessage, assignEmployeeTask, supplementEmployeeTask, advanceEmployeeTask,
   }
