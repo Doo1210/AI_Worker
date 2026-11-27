@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import PageHeader from '@/components/PageHeader.vue'
+import { recordWorkbenchOperation } from '@/workbenchUsage'
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import { ArrowDownToLine, ArrowRight, CircleCheck, FileText, Package, Pause, Play, Plus, Printer, RotateCcw, Sparkles, X } from 'lucide-vue-next'
 import { makeId, usePlatformStore } from '@/stores/platform'
@@ -138,6 +140,7 @@ function calculate(animate = true) {
   planKey.value = inputKey.value
   shown.value = plan.value.loaded
   if (selected.value && !plan.value.groups.some(item => item.cargo.id === selected.value)) selected.value = ''
+  if (animate) recordWorkbenchOperation('workbench-trade', '完成装柜计算')
   if (animate && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) playback()
 }
 
@@ -222,21 +225,14 @@ function exportPackingList() {
 function printPackingList() {
   window.print()
 }
+defineProps<{ pageTitle: string }>()
 </script>
 
 <template>
   <section class="trade-workbench" aria-label="外贸工作台">
-    <header class="page-controls">
-      <nav class="page-tabs" aria-label="外贸业务区">
-        <button class="page-tab" type="button" :aria-pressed="tab === 'loading'" @click="tab = 'loading'">装柜计算</button>
-        <button class="page-tab" type="button" :aria-pressed="tab === 'documents'" @click="tab = 'documents'">外贸单证</button>
-      </nav>
-      <div v-if="tab === 'loading' || draft.packingList" class="page-toolbar page-tab-toolbar">
-        <div v-if="tab === 'loading'" class="page-segments" role="group" aria-label="载具类型">
-          <button class="page-segment" type="button" :aria-pressed="vehicle.kind === 'container'" @click="selectKind('container')">集装箱</button>
-          <button class="page-segment" type="button" :aria-pressed="vehicle.kind === 'truck'" @click="selectKind('truck')">厢式货车</button>
-        </div>
-        <div v-if="tab === 'loading'" class="page-toolbar-controls">
+    <PageHeader :title="pageTitle">
+      <template v-if="tab === 'loading' || draft.packingList" #actions>
+        <template v-if="tab === 'loading'">
           <button class="trade-button" type="button" :disabled="!plan.loaded" @click="playback">
             <Pause v-if="playing" :size="15" aria-hidden="true" /><Play v-else-if="shown < plan.loaded" :size="15" aria-hidden="true" /><RotateCcw v-else :size="15" aria-hidden="true" />
             {{ playing ? '暂停' : shown < plan.loaded ? '继续' : '重播' }}
@@ -244,14 +240,24 @@ function printPackingList() {
           <button class="trade-button" type="button" :disabled="!draft.packingList?.lines.length" @click="useDocumentCargo">从单证取货</button>
           <button class="trade-button" type="button" @click="resetExample">载入示例</button>
           <button class="trade-button trade-primary" type="button" :disabled="dirty || !plan.loaded" @click="generateDocument">生成单据 <ArrowRight :size="16" aria-hidden="true" /></button>
-        </div>
-        <div v-else class="page-toolbar-controls">
+        </template>
+        <template v-else>
           <button type="button" class="trade-button" @click="useDocumentCargo"><Package :size="15" aria-hidden="true" />带回装柜计算</button>
           <button type="button" class="trade-button" @click="exportPackingList"><ArrowDownToLine :size="15" aria-hidden="true" />下载 CSV</button>
           <button type="button" class="trade-button trade-primary" @click="printPackingList"><Printer :size="15" aria-hidden="true" />打印装箱单</button>
+        </template>
+      </template>
+      <nav class="page-tabs" aria-label="外贸业务区">
+        <button class="page-tab" type="button" :aria-pressed="tab === 'loading'" @click="tab = 'loading'">装柜计算</button>
+        <button class="page-tab" type="button" :aria-pressed="tab === 'documents'" @click="tab = 'documents'">外贸单证</button>
+      </nav>
+      <div v-if="tab === 'loading'" class="page-toolbar page-tab-toolbar">
+        <div class="page-segments" role="group" aria-label="载具类型">
+          <button class="page-segment" type="button" :aria-pressed="vehicle.kind === 'container'" @click="selectKind('container')">集装箱</button>
+          <button class="page-segment" type="button" :aria-pressed="vehicle.kind === 'truck'" @click="selectKind('truck')">厢式货车</button>
         </div>
       </div>
-    </header>
+    </PageHeader>
 
     <template v-if="tab === 'loading'">
       <div class="trade-layout">

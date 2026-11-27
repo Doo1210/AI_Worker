@@ -182,7 +182,7 @@ export const useScenarioTaskStore = defineStore('scenario-tasks', () => {
     task.origin === '人员交办' && task.initiatorId === platform.currentUser.id))
   const pendingTasks = computed(() => visibleTasks.value.filter(task => canAct(task)
     && (task.status === 'review' || task.status === 'blocked' || task.status === 'returned')))
-  const adminTasks = computed(() => platform.currentUser.role === 'admin'
+  const adminTasks = computed(() => organization.canViewRuns
     ? tasks.value.map(task => ({ ...runMetadata(task), trigger: task.trigger }))
     : [])
   const monitoredTasks = computed(() => tasks.value

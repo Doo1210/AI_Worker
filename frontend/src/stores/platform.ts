@@ -1,7 +1,9 @@
+import { capabilityNodes, dependencyIssues } from '@/adminDependencies'
+import { useAdminUsageStore } from './adminUsage'
 import { computed, reactive, toRefs, watch } from 'vue'
 import { defineStore } from 'pinia'
 import {
-  ET_DESIGN_ASSISTANT_ID, ET_DESIGN_DESCRIPTION, ET_DESIGN_WORKBENCH_ID,
+  ET_DESIGN_ASSISTANT_ID, ET_DESIGN_WORKBENCH_ID,
   makeSampleEtDesignAssistant, makeSampleSharedAssistants, makeSampleState,
 } from './sample'
 import { COST_WORKBENCH_ID, TRADE_WORKBENCH_ID } from './workbenchScenarios'
@@ -9,10 +11,13 @@ import { TENDER_WORKBENCH_ID } from './tenderSample'
 import { DESIGN_STUDIO_WORKBENCH_ID } from './designStudio'
 import { PROJECT_WORKBENCH_ID } from './projectWorkbench'
 import { draftOfficeDocument } from '@/officeDocument'
+import { orderConversationsByActivity } from '@/conversationOrder'
+import { conversationDirectoryDisplay, workspaceFolderTree, type ResolvedWorkspaceDirectory, type WorkspaceDirectory } from '@/workspaceDirectory'
 import { type OrganizationRole, type RoleAssignment } from './organizationRoles'
+import { useSharedWorkspacesStore } from './sharedWorkspaces'
 import {
-  activeCapabilityVersion, activeConfiguration, capabilityConnectionId, capabilityVersions, captureCapabilityVersion, connectionIsReady,
-  type AdminChange, type AdminConnection, type OrganizationCapabilityFields, type OrganizationDepartment,
+  activeCapabilityVersion, activeConfiguration, capabilityVersions, captureCapabilityVersion,
+  type AdminPlugin, type AdminChange, type AdminConnection, type OrganizationCapabilityFields, type OrganizationDepartment,
   type organizationRoleLabels,
 } from './organizationAdminData'
 
@@ -69,7 +74,9 @@ export interface Conversation {
   id: string
   userId: string
   title: string
-  assistantId: string
+  readonly assistantId: string
+  readonly directory?: WorkspaceDirectory
+  archived?: boolean
   messages: Message[]
   createdAt: string
   updatedAt: string
@@ -194,6 +201,7 @@ export interface PlatformState {
   threads: EmployeeThread[]
   tasks: Task[]
   workbenches: Workbench[]
+  organizationPlugins: AdminPlugin[]
   organizationConnections: AdminConnection[]
   organizationChanges: AdminChange[]
   organizationDepartments: OrganizationDepartment[]
@@ -205,6 +213,7 @@ export interface PlatformState {
 const storageKey = 'ai-worker-platform-prototype-v2'
 const retiredWorkbenchIds = new Set(['workbench-service', 'workbench-procurement', 'workbench-quality'])
 export const nowIso = () => new Date().toISOString()
+export const generalAssistantName = '通用助理'
 export const makeId = (prefix = 'item') => `${prefix}-${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`}`
 
 function validWorkspaceEntryName(name: string) {
@@ -236,6 +245,21 @@ function migrateEtDesignPair(state: PlatformState, workbench: Workbench | undefi
   return true
 }
 
+function migrateWorkbenchConfiguration(item: Workbench) {
+  const snapshot = item.versionSnapshots?.[activeCapabilityVersion(item) ?? '']
+  const changed = ['activeVersion', 'availableVersions', 'versionSnapshots', 'releases'].some(key => key in item)
+  if (snapshot) {
+    item.name = snapshot.name
+    item.description = snapshot.description
+    item.dependencyIds = [...snapshot.resourceIds]
+  }
+  delete item.activeVersion
+  delete item.availableVersions
+  delete item.versionSnapshots
+  delete item.releases
+  return changed
+}
+
 function migrateDepartmentMembership(state: PlatformState) {
   let changed = false
   for (const user of state.users) {
@@ -260,6 +284,24 @@ function migrateDepartmentMembership(state: PlatformState) {
   return changed
 }
 
+function migrateSampleConversationTimes(conversations: Conversation[], examples: Conversation[]) {
+  // The original sample messages all used the same timestamp.
+  const oldSampleTime = '2026-11-11T09:30:00+08:00'
+  let changed = false
+  for (const example of examples) {
+    const saved = conversations.find(chat => chat.id === example.id && chat.userId === example.userId)
+    if (!saved) continue
+    for (const message of example.messages) {
+      if (message.createdAt === oldSampleTime) continue
+      const old = saved.messages.find(item => item.id === message.id && item.createdAt === oldSampleTime)
+      if (!old) continue
+      old.createdAt = message.createdAt
+      changed = true
+    }
+  }
+  return changed
+}
+
 function loadState(): PlatformState {
   try {
     const saved = localStorage.getItem(storageKey)
@@ -268,10 +310,19 @@ function loadState(): PlatformState {
       const seed = makeSampleState()
       if (Array.isArray(parsed.users) && parsed.users.length) {
         const state = { ...seed, ...parsed }
+        state.conversations = Array.isArray(parsed.conversations) ? parsed.conversations : seed.conversations
+        const migratedConversationTimes = migrateSampleConversationTimes(state.conversations, seed.conversations)
         state.organizationDepartments = Array.isArray(parsed.organizationDepartments) ? parsed.organizationDepartments : seed.organizationDepartments
         state.organizationRoles = Array.isArray(parsed.organizationRoles) ? parsed.organizationRoles : seed.organizationRoles
         state.organizationRoleAssignments = Array.isArray(parsed.organizationRoleAssignments) ? parsed.organizationRoleAssignments : []
         state.organizationDirectGrants = parsed.organizationDirectGrants && typeof parsed.organizationDirectGrants === 'object' ? parsed.organizationDirectGrants : {}
+        state.organizationPlugins = Array.isArray(parsed.organizationPlugins) ? parsed.organizationPlugins : seed.organizationPlugins
+        for (const role of seed.organizationRoles.filter(item => item.builtin)) {
+          const existing = state.organizationRoles.find(item => item.id === role.id)
+          if (existing) Object.assign(existing, { name: role.name, description: role.description })
+          else state.organizationRoles.push(role)
+        }
+        if (state.users.find(user => user.id === 'lin')?.title === '组织管理员') state.users.find(user => user.id === 'lin')!.title = '系统管理员'
         const migratedDepartments = migrateDepartmentMembership(state)
         const userIds = new Set(state.users.map(user => user.id))
         const savedWorkbenches = Array.isArray(parsed.workbenches) ? parsed.workbenches : seed.workbenches
@@ -282,8 +333,9 @@ function loadState(): PlatformState {
           .filter(item => [COST_WORKBENCH_ID, TENDER_WORKBENCH_ID, TRADE_WORKBENCH_ID, DESIGN_STUDIO_WORKBENCH_ID, PROJECT_WORKBENCH_ID].includes(item.id) && !workbenchIds.has(item.id))
           .map(item => ({ ...item, allowedUserIds: item.allowedUserIds.filter(id => userIds.has(id)) }))
         state.workbenches = [...existingWorkbenches, ...newWorkbenches]
+        let migratedWorkbenchConfiguration = false
+        for (const item of state.workbenches) migratedWorkbenchConfiguration = migrateWorkbenchConfiguration(item) || migratedWorkbenchConfiguration
         const designWorkbench = state.workbenches.find(item => item.id === ET_DESIGN_WORKBENCH_ID)
-        if (designWorkbench) designWorkbench.description = ET_DESIGN_DESCRIPTION
         if (!Array.isArray(parsed.assistants)) {
           state.assistants = seed.assistants.filter(item =>
             item.scope !== 'organization' && !item.allowedUserIds?.length && userIds.has(item.userId))
@@ -311,7 +363,7 @@ function loadState(): PlatformState {
           })
         }
         const migratedEtPair = migrateEtDesignPair(state, designWorkbench)
-        if (migrateAssistantSharing || removedWorkbenches || newWorkbenches.length || migratedEtPair || migratedDepartments) persistState(state)
+        if (migrateAssistantSharing || removedWorkbenches || newWorkbenches.length || migratedEtPair || migratedDepartments || migratedWorkbenchConfiguration || migratedConversationTimes) persistState(state)
         return state
       }
     }
@@ -360,7 +412,7 @@ function draftReply(prompt: string, name: string, sourceNames: string[], resourc
   }
   const excerpt = prompt.replace(/\s+/g, ' ').slice(0, 55)
   return {
-    text: `${name === '默认助理' ? '我' : name}已收到你的需求「${excerpt}${prompt.length > 55 ? '…' : ''}」。\n\n我先把这项工作拆成三步：\n1. 明确目标和需要交付的形式。\n2. 整理可用材料，列出需要核对的重点。\n3. 输出可继续修改的初稿，并标记待确认事项。\n\n你可以补充具体背景或文件，我会据此继续整理。${context}${abilities}`,
+    text: `${name}已收到你的需求「${excerpt}${prompt.length > 55 ? '…' : ''}」。\n\n我先把这项工作拆成三步：\n1. 明确目标和需要交付的形式。\n2. 整理可用材料，列出需要核对的重点。\n3. 输出可继续修改的初稿，并标记待确认事项。\n\n你可以补充具体背景或文件，我会据此继续整理。${context}${abilities}`,
     artifactName: '工作整理.md',
   }
 }
@@ -372,6 +424,8 @@ export const usePlatformStore = defineStore('platform', () => {
   const timers = new Map<string, ReturnType<typeof setTimeout>>()
   const currentUser = computed(() => state.users.find(user => user.id === state.currentUserId && user.status !== 'disabled')
     ?? state.users.find(user => user.status !== 'disabled') ?? state.users[0]!)
+  const nodes = computed(() => capabilityNodes(state))
+  const isReady = (id: string) => !dependencyIssues(id, nodes.value, state.organizationConnections, state.organizationPlugins, currentUser.value.id).length
   const myAssistants = computed(() => state.assistants.filter(item => item.scope !== 'organization' && item.userId === currentUser.value.id))
   const sharedAssistants = computed(() => state.assistants.filter(item =>
     (item.scope === 'organization' || item.userId !== currentUser.value.id)
@@ -381,7 +435,7 @@ export const usePlatformStore = defineStore('platform', () => {
   const organizationAssistants = computed(() => state.assistants.filter(item => item.scope === 'organization'
     && (currentUser.value.role === 'admin' || item.maintainerId === currentUser.value.id)))
   const visibleAssistants = computed<Assistant[]>(() => [
-    { id: 'default', userId: currentUser.value.id, name: '默认助理', description: '适用于日常办公和通用工作', instructions: '', resourceIds: [] },
+    { id: 'default', userId: currentUser.value.id, name: generalAssistantName, description: '适用于日常办公和通用工作', instructions: '', resourceIds: [] },
     ...myAssistants.value,
     ...sharedAssistants.value,
   ])
@@ -389,11 +443,13 @@ export const usePlatformStore = defineStore('platform', () => {
   const myFolders = computed(() => recentFirst(state.workspaceFolders.filter(folder => folder.userId === currentUser.value.id)))
   const visibleResources = computed(() => state.resources
     .filter(item => item.ownerId === currentUser.value.id || (item.scope !== 'personal' && item.allowedUserIds.includes(currentUser.value.id)))
-    .map(item => item.scope === 'organization' && item.status === '可用'
-      && (item.connectionId === null || !connectionIsReady(capabilityConnectionId(item), state.organizationConnections))
-      ? { ...item, status: '未连接' as const }
-      : item))
-  const personalConversations = computed(() => recentFirst(state.conversations.filter(item => item.userId === currentUser.value.id)))
+    .map(item => {
+      const snapshot = item.scope === 'organization' ? item.versionSnapshots?.[activeCapabilityVersion(item) ?? ''] : undefined
+      const resource = snapshot ? { ...item, name: snapshot.name, description: snapshot.description } : item
+      return item.scope === 'organization' && item.status === '可用' && !isReady(item.id)
+        ? { ...resource, status: '未连接' as const } : resource
+    }))
+  const personalConversations = computed(() => orderConversationsByActivity(state.conversations.filter(item => item.userId === currentUser.value.id)))
   const visibleEmployees = computed(() => state.employees
     .filter(item => item.status === 'published'
       && item.allowedUserIds.includes(currentUser.value.id)
@@ -403,7 +459,7 @@ export const usePlatformStore = defineStore('platform', () => {
   const myTasks = computed(() => recentFirst(state.tasks.filter(item => item.userId === currentUser.value.id && visibleEmployees.value.some(employee => employee.id === item.employeeId))))
   const visibleWorkbenches = computed(() => state.workbenches.filter(item => item.status === 'active'
     && item.allowedUserIds.includes(currentUser.value.id)
-    && connectionIsReady(capabilityConnectionId(item), state.organizationConnections)))
+    && isReady(item.id)))
 
   watch(state, () => persistState(state), { deep: true })
 
@@ -490,21 +546,6 @@ export const usePlatformStore = defineStore('platform', () => {
     return item ? { kind, item, parentId: item.folderId } : undefined
   }
 
-  function workspaceFolderTree(rootId: string) {
-    const children = new Map<string, string[]>()
-    for (const folder of myFolders.value) {
-      if (folder.parentId === undefined) continue
-      const siblings = children.get(folder.parentId) ?? []
-      siblings.push(folder.id)
-      children.set(folder.parentId, siblings)
-    }
-    const ids = new Set([rootId])
-    for (const id of ids) {
-      for (const child of children.get(id) ?? []) ids.add(child)
-    }
-    return ids
-  }
-
   function renameWorkspaceEntry(kind: WorkspaceEntryKind, id: string, name: string): boolean {
     const target = findWorkspaceEntry(kind, id)
     const trimmed = name.trim()
@@ -519,7 +560,7 @@ export const usePlatformStore = defineStore('platform', () => {
   function moveWorkspaceEntry(kind: WorkspaceEntryKind, id: string, folderId?: string): boolean {
     const target = findWorkspaceEntry(kind, id)
     if (!target || (folderId !== undefined && !myFolders.value.some(folder => folder.id === folderId))) return false
-    if (kind === 'folder' && folderId !== undefined && workspaceFolderTree(id).has(folderId)) return false
+    if (kind === 'folder' && folderId !== undefined && workspaceFolderTree(myFolders.value, id).has(folderId)) return false
     if (target.parentId === folderId) return true
     if (workspaceDirectoryHasName(target.item.name, folderId, { kind, id })) return false
     if (target.kind === 'folder') {
@@ -536,21 +577,50 @@ export const usePlatformStore = defineStore('platform', () => {
     if (target.kind === 'file') {
       state.files = state.files.filter(file => file.userId !== userId || file.id !== id)
     } else {
-      const folders = workspaceFolderTree(id)
+      const folders = workspaceFolderTree(myFolders.value, id)
       state.workspaceFolders = state.workspaceFolders.filter(folder => folder.userId !== userId || !folders.has(folder.id))
       state.files = state.files.filter(file => file.userId !== userId || file.folderId === undefined || !folders.has(file.folderId))
     }
     return true
   }
 
-  function createConversation(assistantId: string, title = '新建会话') {
+  function resolveConversationDirectory(directory: WorkspaceDirectory = {}): ResolvedWorkspaceDirectory | undefined {
+    const { spaceId, folderId } = directory
+    const shared = spaceId === undefined ? undefined : useSharedWorkspacesStore()
+    const space = shared?.workspaces.find(workspace => workspace.id === spaceId)
+    if (shared && !space) return
+
+    const folders = space?.folders ?? myFolders.value
+    const files = space?.files ?? myFiles.value
+    const foldersById = new Map(folders.map(folder => [folder.id, folder]))
+    if (folderId !== undefined && !foldersById.has(folderId)) return
+    const subtree = folderId === undefined ? undefined : workspaceFolderTree(folders, folderId)
+    return {
+      spaceId, folderId,
+      ...conversationDirectoryDisplay(space?.name, foldersById, folderId),
+      folders: subtree ? folders.filter(folder => folder.id !== folderId && subtree.has(folder.id)) : folders,
+      files: subtree ? files.filter(file => file.folderId !== undefined && subtree.has(file.folderId)) : files,
+      canWrite: !space || shared?.canEdit(space.id) === true,
+    }
+  }
+
+  function createConversation(assistantId: string, title = '新建会话', directory: WorkspaceDirectory = {}) {
+    if (!resolveConversationDirectory(directory)) return
     const id = makeId('chat')
     state.conversations.push({
       id, userId: currentUser.value.id, title,
       assistantId: visibleAssistants.value.some(assistant => assistant.id === assistantId) ? assistantId : 'default',
+      directory: { ...directory },
       messages: [], createdAt: nowIso(), updatedAt: nowIso(),
     })
     return id
+  }
+
+  function setConversationArchived(id: string, archived: boolean) {
+    const conversation = personalConversations.value.find(item => item.id === id)
+    if (!conversation || (archived && pendingConversations.has(id))) return false
+    conversation.archived = archived
+    return true
   }
 
   async function sendConversationMessage(
@@ -559,13 +629,22 @@ export const usePlatformStore = defineStore('platform', () => {
     const conversation = personalConversations.value.find(item => item.id === id)
     const content = text.trim()
     if (!conversation || !content || pendingConversations.has(id)) return
+    if (conversation.archived) throw new Error('请取消归档后继续会话。')
     const assistant = visibleAssistants.value.find(item => item.id === conversation.assistantId)
     if (!assistant) throw new Error('当前账号已无法使用此会话的助理。')
-    const allowedFiles = myFiles.value.filter(file => references.includes(file.id))
+    const directory = resolveConversationDirectory(conversation.directory)
+    if (!directory) throw new Error('当前账号已无法访问此会话的工作目录。')
+    if (assistant.scope === 'organization' && !isReady(assistant.id)) {
+      const reason = dependencyIssues(assistant.id, nodes.value, state.organizationConnections, state.organizationPlugins, currentUser.value.id).join('；')
+      useAdminUsageStore().record({ userId: conversation.userId, targetId: assistant.id, kind: 'assistant', operation: '助理请求', status: '失败', inputTokens: 0, outputTokens: 0, priced: false, source: '原型操作', note: '执行前依赖检查未通过：' + reason })
+      throw new Error('助理依赖尚未就绪：' + reason)
+    }
+    const allowedFiles = directory.files.filter(file => references.includes(file.id))
     const resources = visibleResources.value.filter(item => item.status === '可用' && assistant.resourceIds.includes(item.id))
     const officeDocument = automationReply ? undefined : draftOfficeDocument(content, allowedFiles)
     const reply = automationReply ? undefined
-      : officeDocument ?? draftReply(content, assistant.name, allowedFiles.map(file => file.name), resources.map(resource => resource.name))
+      : officeDocument ?? draftReply(content, assistant.id === 'default' ? '我' : assistant.name,
+        allowedFiles.map(file => file.name), resources.map(resource => resource.name))
     pendingConversations.add(id)
     conversation.messages.push(newMessage('user', content, { references: allowedFiles.map(file => file.id) }))
     if (conversation.title === '新建会话') conversation.title = content.replace(/\s+/g, ' ').slice(0, 24)
@@ -583,6 +662,7 @@ export const usePlatformStore = defineStore('platform', () => {
         }))
       }
       conversation.updatedAt = nowIso()
+      if (assistant.scope === 'organization') useAdminUsageStore().record({ userId: conversation.userId, targetId: assistant.id, kind: 'assistant', operation: '助理请求', status: '成功', modelId: resources.find(item => item.type === '模型')?.id, inputTokens: 0, outputTokens: 0, priced: false, source: '原型操作', note: '已记录模拟回复；Token 未接入真实计量。' })
     } finally {
       pendingConversations.delete(id)
     }
@@ -591,19 +671,28 @@ export const usePlatformStore = defineStore('platform', () => {
   function saveMessageFile(conversationId: string, messageId: string, options?: ArtifactSaveOptions): string | undefined {
     const conversation = personalConversations.value.find(item => item.id === conversationId)
     const message = conversation?.messages.find(item => item.id === messageId && item.role === 'assistant')
-    if (!message) return
+    if (!conversation || !message) return
+    const directory = resolveConversationDirectory(conversation.directory)
+    if (!directory?.canWrite) return
     const id = `artifact-${message.id}`
-    const existing = myFiles.value.find(file => file.id === id)
-    if (existing && !options) return id
+    if (!options && directory.files.some(file => file.id === id)) return id
 
     const name = options?.name.trim() ?? message.artifactName ?? '助理产物.md'
     const content = options?.content ?? message.artifactContent ?? message.text
-    const folderId = options?.folderId
+    const folderId = options ? options.folderId : directory.folderId
     const size = new Blob([content]).size
     if (!validWorkspaceEntryName(name) || !content.trim()
-      || (folderId !== undefined && !myFolders.value.some(folder => folder.id === folderId))
-      || size > 1024 * 1024
-      || myFiles.value.reduce((total, file) => total + (file.id === id ? 0 : file.size), size) > 2 * 1024 * 1024) return
+      || (folderId !== directory.folderId && !directory.folders.some(folder => folder.id === folderId))
+      || size > 1024 * 1024) return
+
+    if (directory.spaceId !== undefined) {
+      return useSharedWorkspacesStore().saveArtifact(directory.spaceId, id,
+        { name, folderId, content, size, type: 'text' }, directory.folderId) ? id : undefined
+    }
+
+    const existing = myFiles.value.find(file => file.id === id)
+    if (existing && !directory.files.some(file => file.id === id)) return
+    if (myFiles.value.reduce((total, file) => total + (file.id === id ? 0 : file.size), size) > 2 * 1024 * 1024) return
 
     if (options && workspaceDirectoryHasName(name, folderId, { kind: 'file', id })) return
 
@@ -736,7 +825,7 @@ export const usePlatformStore = defineStore('platform', () => {
     visibleResources, personalConversations, visibleEmployees, employeeThreads, myTasks, visibleWorkbenches,
     setCurrentUser, savePersonalAssistant, saveOrganizationAssistant,
     createWorkspaceFolder, renameWorkspaceEntry, moveWorkspaceEntry, deleteWorkspaceEntry,
-    createConversation, sendConversationMessage, saveMessageFile,
+    resolveConversationDirectory, createConversation, setConversationArchived, sendConversationMessage, saveMessageFile,
     startEmployeeThread, sendEmployeeMessage, assignEmployeeTask, supplementEmployeeTask, advanceEmployeeTask,
   }
 })

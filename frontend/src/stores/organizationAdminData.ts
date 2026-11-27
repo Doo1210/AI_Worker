@@ -5,6 +5,8 @@ export interface OrganizationCapabilityFields {
   availableVersions?: string[]
   connectionId?: string | null
   versionSnapshots?: Record<string, CapabilityConfiguration>
+  dependencyIds?: string[]
+  releases?: { version: string; at: string; actor: string; notes: string }[]
 }
 
 interface CapabilityConfiguration {
@@ -17,7 +19,7 @@ interface CapabilityConfiguration {
 
 type ConfigurableCapability = OrganizationCapabilityFields & CapabilityConfiguration
 
-const sampleUpdates = new Set(['assistant-org-documents', 'employee-design', 'workbench-design', 'model-deepseek', 'skill-summary', 'mcp-files'])
+const sampleUpdates = new Set(['assistant-org-documents', 'employee-design', 'model-deepseek', 'skill-summary', 'mcp-files'])
 
 export function capabilityVersions(item: OrganizationCapabilityFields & { id: string }, isDraft = false) {
   if (item.availableVersions !== undefined) return item.availableVersions
@@ -44,10 +46,37 @@ export function activeConfiguration<T extends ConfigurableCapability & { id: str
 export interface AdminConnection {
   id: string
   name: string
-  type: '模型' | 'MCP' | '业务系统'
+  type: '模型' | 'MCP' | '业务 API' | '业务系统' | '企业消息'
   endpoint: string
-  status: '正常' | '待检测' | '已停用'
+  status: '正常' | '待检测' | '异常' | '已停用'
   lastCheckedAt?: string
+  credentialMode?: 'environment' | 'organization' | 'member' | 'none'
+  credentialRef?: string
+  memberCredentialRefs?: Record<string, string>
+  lastError?: string
+  checks?: { at: string; status: '正常' | '异常'; message: string }[]
+}
+
+export interface AdminPlugin {
+  id: string
+  name: string
+  description: string
+  enabled: boolean
+  version: string
+  versions: string[]
+  dependencyIds: string[]
+  capabilityIds: string[]
+  loadStatus: '已加载' | '未加载' | '加载失败'
+  lastError?: string
+  checkedAt?: string
+}
+
+export function makeAdminPlugins(): AdminPlugin[] {
+  return [
+    { id: 'plugin-assistants', name: '助理运行组件', description: '提供组织助理的会话与能力配置。', enabled: true, version: '1.0.0', versions: ['1.0.0', '1.1.0'], dependencyIds: [], capabilityIds: ['assistant-org-documents', 'assistant-org-et-design'], loadStatus: '已加载' },
+    { id: 'plugin-workbenches', name: '业务工作台组件', description: '提供已交付的业务工作台入口。', enabled: true, version: '1.0.0', versions: ['1.0.0', '1.1.0'], dependencyIds: [], capabilityIds: ['workbench-design', 'workbench-project', 'workbench-trade', 'workbench-cost', 'workbench-tender', 'workbench-design-studio'], loadStatus: '已加载' },
+    { id: 'plugin-documents', name: '文档工具组件', description: '提供文档总结与表格分析功能。', enabled: true, version: '1.0.0', versions: ['1.0.0', '1.1.0'], dependencyIds: ['plugin-assistants'], capabilityIds: ['skill-summary', 'tool-sheet'], loadStatus: '已加载' },
+  ]
 }
 
 export interface OrganizationDepartment {
@@ -58,8 +87,10 @@ export interface OrganizationDepartment {
 }
 
 export const organizationRoleLabels = {
-  admin: '组织管理员',
-  'department-admin': '部门管理员',
+  admin: '系统管理员',
+  'department-admin': '组织管理员',
+  operator: '运行运营人员',
+  'platform-operator': '平台运维人员',
   member: '普通成员',
 }
 
@@ -71,6 +102,9 @@ export interface AdminChange {
   action: string
   before: string
   after: string
+  targetId?: string
+  targetType?: 'member' | 'role' | 'capability' | 'connection' | 'plugin' | 'department'
+  relatedIds?: string[]
 }
 
 const defaultConnections: Record<string, string> = {

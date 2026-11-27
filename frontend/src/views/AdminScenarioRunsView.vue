@@ -1,10 +1,12 @@
 <script setup lang="ts">
+import PageHeader from '@/components/PageHeader.vue'
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, ArrowUpRight, ChevronRight, Search, Zap } from 'lucide-vue-next'
 import { useOrganizationAdminStore } from '@/stores/organizationAdmin'
 import { usePlatformStore } from '@/stores/platform'
+import { usagePeriods } from '@/stores/adminUsage'
 import { scenarioStatusLabels, useScenarioTaskStore, type ScenarioTaskStatus } from '@/stores/scenarioTasks'
 
 const platform = usePlatformStore()
@@ -24,7 +26,7 @@ const attemptStatus = {
 } as const
 
 type AdminTask = (typeof runtime.adminTasks)[number]
-type Filter = 'q' | 'employee' | 'origin' | 'status' | 'connection'
+type Filter = 'q' | 'employee' | 'origin' | 'status' | 'connection' | 'period'
 
 const dateTime = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'short', timeStyle: 'medium' })
 
@@ -56,10 +58,10 @@ const selected = computed(() => runtime.adminTasks.find(task => task.id === sele
 const latestAttempt = computed(() => selected.value?.attempts.at(-1))
 const dependency = computed(() => connections.value.get(latestAttempt.value?.connectionId ?? ''))
 const dependencyReady = computed(() => !!dependency.value && runtime.isConnectionAvailable(dependency.value.id))
-const canRecoverConnection = computed(() => selected.value?.status === 'blocked' && dependency.value
+const canRecoverConnection = computed(() => organization.canManagePlatform && selected.value?.status === 'blocked' && dependency.value
   && dependency.value.status !== '已停用' && !dependencyReady.value)
 
-const hasFilters = computed(() => (['q', 'employee', 'origin', 'status', 'connection'] as const).some(key => queryValue(key)))
+const hasFilters = computed(() => (['q', 'employee', 'origin', 'status', 'connection', 'period'] as const).some(key => queryValue(key)))
 const visibleTasks = computed(() => {
   const keyword = queryValue('q').trim().toLocaleLowerCase()
   const employee = queryValue('employee')
@@ -68,7 +70,8 @@ const visibleTasks = computed(() => {
   const connection = queryValue('connection')
 
   return runtime.adminTasks.filter(task =>
-    (!employee || task.employeeId === employee)
+    (!queryValue('period') || Date.parse(task.createdAt) >= Date.now() - ({ '24h': 1, '7d': 7, '30d': 30 }[queryValue('period')] ?? 30) * 86_400_000)
+    && (!employee || task.employeeId === employee)
     && (!origin || task.origin === origin)
     && (!status || task.status === status)
     && (!connection || task.attempts.some(attempt => attempt.connectionId === connection))
@@ -77,10 +80,10 @@ const visibleTasks = computed(() => {
 })
 
 const stats = computed(() => ({
-  tasks: runtime.adminTasks.length,
-  review: runtime.adminTasks.filter(task => task.status === 'review' || task.status === 'returned').length,
-  blocked: runtime.adminTasks.filter(task => task.status === 'blocked').length,
-  attempts: runtime.adminTasks.reduce((count, task) => count + task.attempts.length, 0),
+  tasks: visibleTasks.value.length,
+  review: visibleTasks.value.filter(task => task.status === 'review' || task.status === 'returned').length,
+  blocked: visibleTasks.value.filter(task => task.status === 'blocked').length,
+  attempts: visibleTasks.value.reduce((count, task) => count + task.attempts.length, 0),
 }))
 
 function nextStep(task: AdminTask) {
@@ -91,7 +94,7 @@ function nextStep(task: AdminTask) {
     case 'completed': return '任务已完成，可查看历次执行记录。'
     case 'blocked': {
       if (dependencyReady.value) return '连接已恢复，等待业务负责人在工作门户重试。'
-      if (dependency.value?.status === '已停用') return '在系统接入启用连接并完成检测后，由业务负责人重试。'
+      if (dependency.value?.status === '已停用') return '在系统连接启用连接并完成检测后，由业务负责人重试。'
       if (dependency.value) return '恢复依赖连接后，由业务负责人在工作门户重试。'
       return '由业务负责人核对异常并在工作门户处理。'
     }
@@ -102,15 +105,20 @@ function restoreDependency() {
   const connection = dependency.value
   if (!connection || !canRecoverConnection.value) return
   if (runtime.restoreConnection(connection.id)) ElMessage.success('模拟连接已恢复，等待业务负责人重试。')
-  else ElMessage.warning('连接恢复失败，请在系统接入检查连接配置。')
+  else ElMessage.warning('连接恢复失败，请在系统连接检查连接配置。')
 }
 </script>
 
 <template>
-  <section class="page page-surface" :aria-label="selectedId ? '任务运行详情' : '运行监管'">
-    <header v-if="selectedId" class="page-controls page-toolbar page-tab-toolbar">
-      <RouterLink class="run-link back-link" :to="locationFor()"><ArrowLeft :size="16" aria-hidden="true" />返回运行监管</RouterLink>
-    </header>
+  <section class="page page-surface page-with-control-inset" :aria-label="selectedId ? '任务运行详情' : '运行监管'">
+    <PageHeader v-if="selectedId" :title="selected?.title ?? '任务运行详情'">
+      <template #back>
+        <RouterLink class="run-link back-link" :to="locationFor()"><ArrowLeft :size="16" aria-hidden="true" />返回运行监管</RouterLink>
+      </template>
+      <template v-if="canRecoverConnection" #actions>
+        <el-button :icon="Zap" type="primary" @click="restoreDependency">模拟恢复连接</el-button>
+      </template>
+    </PageHeader>
 
     <div v-if="selected" class="page-body">
       <div class="runtime-details">
@@ -137,13 +145,12 @@ function restoreDependency() {
             <div><dt>当前接手人</dt><dd>{{ members.get(selected.assigneeId) ?? '—' }}</dd></div>
             <div v-if="latestAttempt"><dt>最近执行版本</dt><dd>{{ latestAttempt.version || '—' }}</dd></div>
             <div v-if="latestAttempt?.connectionId"><dt>依赖连接</dt><dd>
-              <RouterLink v-if="dependency" class="run-link" :to="'/admin/connections/' + encodeURIComponent(dependency.id)">{{ dependency.name }} <ArrowUpRight :size="14" aria-hidden="true" /></RouterLink>
-              <span v-else>连接不可用</span>
+              <RouterLink v-if="dependency && organization.canManagePlatform" class="run-link" :to="'/admin/connections/' + encodeURIComponent(dependency.id)">{{ dependency.name }} <ArrowUpRight :size="14" aria-hidden="true" /></RouterLink>
+              <span v-else>{{ dependency?.name ?? '连接不可用' }}</span>
               <el-tag v-if="dependency" class="dependency-status" :type="dependencyReady ? 'success' : 'warning'" size="small" effect="light" disable-transitions>{{ dependency.status }}</el-tag>
             </dd></div>
           </dl>
           <p class="next-step" :class="{ 'has-issue': selected.status === 'blocked' }">{{ nextStep(selected) }}</p>
-          <el-button v-if="canRecoverConnection" :icon="Zap" type="primary" @click="restoreDependency">模拟恢复连接</el-button>
         </section>
       </div>
 
@@ -173,34 +180,37 @@ function restoreDependency() {
     <el-empty v-else-if="selectedId" :image-size="84" description="任务不存在或当前账号无权查看" />
 
     <template v-else>
-      <header class="page-controls page-toolbar page-tab-toolbar run-filters">
-        <div class="page-toolbar-filters">
-          <el-input :model-value="queryValue('q')" :prefix-icon="Search" clearable aria-label="搜索运行任务" placeholder="搜索任务编号、记录编号或员工" @update:model-value="updateFilter('q', $event)" />
-          <el-select :model-value="queryValue('employee')" popper-class="filter-options" aria-label="AI 员工" placeholder="全部员工" clearable @update:model-value="updateFilter('employee', $event ?? '')">
-            <el-option v-for="id in employees" :key="id" :label="employeeNames.get(id) ?? id" :value="id" />
-          </el-select>
-          <el-select :model-value="queryValue('origin')" popper-class="filter-options" aria-label="发起方式" placeholder="全部发起方式" clearable @update:model-value="updateFilter('origin', $event ?? '')">
-            <el-option v-for="origin in origins" :key="origin" :label="origin" :value="origin" />
-          </el-select>
-          <el-select :model-value="queryValue('status')" popper-class="filter-options" aria-label="任务状态" placeholder="全部状态" clearable @update:model-value="updateFilter('status', $event ?? '')">
-            <el-option v-for="(label, status) in scenarioStatusLabels" :key="status" :label="label" :value="status" />
-          </el-select>
-          <el-tag v-if="queryValue('connection')" effect="plain" closable @close="updateFilter('connection', '')">{{ connections.get(queryValue('connection'))?.name ?? '连接不可用' }}</el-tag>
+      <PageHeader title="AI 员工运行">
+        <div class="page-toolbar page-tab-toolbar run-filters">
+          <div class="page-toolbar-filters">
+            <el-input :model-value="queryValue('q')" :prefix-icon="Search" clearable aria-label="搜索运行任务" placeholder="搜索任务编号、记录编号或员工" @update:model-value="updateFilter('q', $event)" />
+            <el-select :model-value="queryValue('period')" placeholder="全部时间" aria-label="任务时间" clearable @update:model-value="updateFilter('period', $event ?? '')"><el-option v-for="item in usagePeriods" :key="item.value" :label="item.label" :value="item.value" /></el-select>
+            <el-select :model-value="queryValue('employee')" popper-class="filter-options" aria-label="AI 员工" placeholder="全部员工" clearable @update:model-value="updateFilter('employee', $event ?? '')">
+              <el-option v-for="id in employees" :key="id" :label="employeeNames.get(id) ?? id" :value="id" />
+            </el-select>
+            <el-select :model-value="queryValue('origin')" popper-class="filter-options" aria-label="发起方式" placeholder="全部发起方式" clearable @update:model-value="updateFilter('origin', $event ?? '')">
+              <el-option v-for="origin in origins" :key="origin" :label="origin" :value="origin" />
+            </el-select>
+            <el-select :model-value="queryValue('status')" popper-class="filter-options" aria-label="任务状态" placeholder="全部状态" clearable @update:model-value="updateFilter('status', $event ?? '')">
+              <el-option v-for="(label, status) in scenarioStatusLabels" :key="status" :label="label" :value="status" />
+            </el-select>
+            <el-tag v-if="queryValue('connection')" effect="plain" closable @close="updateFilter('connection', '')">{{ connections.get(queryValue('connection'))?.name ?? '连接不可用' }}</el-tag>
+          </div>
+          <div class="page-toolbar-controls">
+            <span class="run-filter-count muted" aria-live="polite">{{ visibleTasks.length }} 项任务</span>
+            <RouterLink v-if="hasFilters" class="run-link" :to="{ name: 'admin-scenario-runs' }">清除筛选</RouterLink>
+          </div>
         </div>
-        <div class="page-toolbar-controls">
-          <span class="run-filter-count muted" aria-live="polite">{{ visibleTasks.length }} 项任务</span>
-          <RouterLink v-if="hasFilters" class="run-link" :to="{ name: 'admin-scenario-runs' }">清除筛选</RouterLink>
-        </div>
-      </header>
+      </PageHeader>
 
       <dl class="runtime-stats page-body" aria-label="任务运行统计">
-        <div class="panel"><dt>任务总数</dt><dd>{{ stats.tasks }}</dd></div>
+        <div class="panel"><dt>筛选任务</dt><dd>{{ stats.tasks }}</dd></div>
         <div class="panel"><dt>待业务处理</dt><dd>{{ stats.review }}</dd></div>
         <div class="panel"><dt>运行异常</dt><dd :class="{ 'stat-issue': stats.blocked }">{{ stats.blocked }}</dd></div>
         <div class="panel"><dt>执行记录</dt><dd>{{ stats.attempts }}</dd></div>
       </dl>
 
-      <section aria-label="任务运行列表">
+      <section class="page-body" aria-label="任务运行列表">
         <template v-if="visibleTasks.length">
           <div class="run-columns run-labels" aria-hidden="true"><span>业务记录</span><span>AI 员工</span><span>发起方式</span><span>任务状态</span><span>最近更新</span><span></span></div>
           <ul class="run-list">

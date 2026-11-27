@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import PageHeader from '@/components/PageHeader.vue'
+import { recordWorkbenchOperation } from '@/workbenchUsage'
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ArrowDownRight, Check, ChevronLeft, ChevronRight, Flag, Lightbulb, Plus, Search, Sparkles } from 'lucide-vue-next'
 import WorkbenchAssistantSelect from '@/components/WorkbenchAssistantSelect.vue'
@@ -11,7 +13,7 @@ import {
 } from '@/stores/projectWorkbench'
 import ProjectTaskRow from './ProjectTaskRow.vue'
 
-const props = defineProps<{ userId: string }>()
+const props = defineProps<{ userId: string; pageTitle: string }>()
 const store = usePlatformStore()
 const { assistant } = useWorkbenchAssistant()
 const assistantFallback = '项目助理'
@@ -104,6 +106,7 @@ const assistantResult = computed(() => {
 function runAssistant(next: AssistantAction) {
   assistantName.value = assistant.value?.name ?? assistantFallback
   action.value = next
+  recordWorkbenchOperation('workbench-project', '生成项目工作梳理')
 }
 
 watch([projects, projectId], () => {
@@ -211,7 +214,12 @@ function saveReview() {
 
 <template>
   <section class="pm-workbench" aria-label="项目管理工作台">
-    <header class="page-controls">
+    <PageHeader :title="pageTitle">
+      <template #actions>
+        <button class="pm-button" type="button" @click="openProject"><Plus :size="14" aria-hidden="true" />新建项目</button>
+        <button v-if="tab === 'ideas'" class="pm-button pm-primary" type="button" @click="openIdea()"><Plus :size="16" aria-hidden="true" />新建想法</button>
+        <button v-else class="pm-button pm-primary" type="button" @click="openTask()"><Plus :size="16" aria-hidden="true" />新建任务</button>
+      </template>
       <nav class="page-tabs" aria-label="项目工作区">
         <button v-for="item in tabs" :key="item.id" class="page-tab" type="button"
           :aria-pressed="tab === item.id" @click="tab = item.id">{{ item.name }}</button>
@@ -223,16 +231,13 @@ function saveReview() {
           <p v-if="project.goal">{{ project.goal }}</p>
           <span class="pm-workload"><time :datetime="today">{{ today }}</time> · {{ todayGroups.active.length + todayGroups.overdue.length }} 项待办</span>
         </div>
-        <div class="page-toolbar-controls">
+        <div v-if="milestone" class="page-toolbar-controls">
           <button v-if="milestone" class="pm-next" type="button" @click="openTask(milestone)">
             <Flag :size="15" aria-hidden="true" /><span>里程碑 · {{ milestone.title }}</span><time :datetime="milestone.due">{{ milestone.due.slice(5) }}</time>
           </button>
-          <button class="pm-button" type="button" @click="openProject"><Plus :size="14" aria-hidden="true" />新建项目</button>
-          <button v-if="tab === 'ideas'" class="pm-button pm-primary" type="button" @click="openIdea()"><Plus :size="16" aria-hidden="true" />新建想法</button>
-          <button v-else class="pm-button pm-primary" type="button" @click="openTask()"><Plus :size="16" aria-hidden="true" />新建任务</button>
         </div>
       </div>
-    </header>
+    </PageHeader>
 
     <div class="pm-layout page-body">
       <div class="pm-content">

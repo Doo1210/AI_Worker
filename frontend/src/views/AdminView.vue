@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PageHeader from '@/components/PageHeader.vue'
 import { computed, defineAsyncComponent, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElTabPane, ElTabs } from 'element-plus'
@@ -281,28 +282,34 @@ function publish() {
 </script>
 
 <template>
-  <section class="page page-surface development-page" :aria-label="entry?.name ?? title">
-    <header v-if="!employeeMode || selectedId || employeeCreation" class="page-controls page-toolbar page-tab-toolbar">
-      <RouterLink class="development-back" :to="employeeMode ? employeeBack : selectedId ? { name: 'resource-management', params: { id: '' } } : '/work/resources'">
-        <el-icon><ArrowLeft /></el-icon>{{ employeeMode ? fromAdmin ? '管理后台 · AI 员工' : '我的员工分身' : selectedId ? title : '资源库' }}
-      </RouterLink>
-      <div v-if="employee" class="page-toolbar-controls">
-        <el-tag v-if="employeeStatus" :type="employeeStatus.type" effect="light">{{ employeeStatus.label }}</el-tag>
-        <el-tag v-if="effectiveVersion" effect="plain">v{{ effectiveVersion }} 生效中</el-tag>
-        <RouterLink v-if="employeeGrant" class="responsible-action" :to="runsLocation(employee.id)">
-          <Activity :size="15" aria-hidden="true" />查看运行
+  <section class="page page-surface page-with-control-inset development-page" :aria-label="entry?.name ?? title">
+    <PageHeader v-if="!employeeMode || selectedId || employeeCreation"
+      :title="employeeCreation ? '新建 AI 员工' : entry?.name ?? title">
+      <template #back>
+        <RouterLink class="development-back" :to="employeeMode ? employeeBack : selectedId ? { name: 'resource-management', params: { id: '' } } : '/work/resources'">
+          <el-icon><ArrowLeft /></el-icon>{{ employeeMode ? fromAdmin ? '管理后台 · AI 员工' : '我的员工分身' : selectedId ? title : '资源库' }}
         </RouterLink>
-      </div>
-      <template v-else-if="!employeeMode && !selectedId">
+      </template>
+      <template v-if="employee || (!employeeMode && !selectedId && admin)" #actions>
+        <template v-if="employee">
+          <el-tag v-if="employeeStatus" :type="employeeStatus.type" effect="light">{{ employeeStatus.label }}</el-tag>
+          <el-tag v-if="effectiveVersion" effect="plain">v{{ effectiveVersion }} 生效中</el-tag>
+          <RouterLink v-if="employeeGrant" class="responsible-action" :to="runsLocation(employee.id)">
+            <Activity :size="15" aria-hidden="true" />查看运行
+          </RouterLink>
+        </template>
+        <el-button v-else type="primary" :icon="Plus" @click="create">新增组织资源</el-button>
+      </template>
+      <div v-if="!employeeMode && !selectedId" class="page-toolbar page-tab-toolbar">
         <div class="page-toolbar-filters">
           <el-input v-model="query" :prefix-icon="Search" placeholder="搜索名称" aria-label="搜索名称" clearable class="development-search" />
         </div>
-        <div v-if="admin" class="page-toolbar-controls">
-          <el-button type="primary" :icon="Plus" @click="create">新增组织资源</el-button>
-        </div>
+      </div>
+    </PageHeader>
+    <PageHeader v-else :title="title">
+      <template v-if="admin" #actions>
+        <el-button type="primary" :icon="Plus" @click="create">新建 AI 员工</el-button>
       </template>
-    </header>
-    <header v-else :class="{ 'page-controls': !runtimeMode }">
       <nav class="page-tabs" aria-label="我的员工分身视图">
         <RouterLink :to="responsibleListLocation" custom v-slot="{ href, navigate }">
           <a class="page-tab" :href="href" :aria-current="!runtimeMode ? 'page' : undefined" @click="navigate">
@@ -324,18 +331,10 @@ function publish() {
             <option v-for="(status, value) in lifecycleOptions" :key="value" :value="value">{{ status.label }}</option>
           </select>
         </div>
-        <div v-if="admin" class="page-toolbar-controls">
-          <el-button type="primary" :icon="Plus" @click="create">新建 AI 员工</el-button>
-        </div>
       </div>
-    </header>
+    </PageHeader>
 
-    <EmployeeResponsibilityRuns v-if="runtimeMode && !employeeCreation">
-      <template v-if="admin" #actions>
-        <el-button type="primary" :icon="Plus" @click="create">新建 AI 员工</el-button>
-      </template>
-    </EmployeeResponsibilityRuns>
-
+    <EmployeeResponsibilityRuns v-if="runtimeMode && !employeeCreation" />
     <section v-else-if="employeeMode && !selectedId && !employeeCreation" class="page-body" aria-label="员工管理">
       <div v-if="responsibleEmployees.length" class="responsible-grid">
         <article v-for="{ employee, members, active, pending, permissions, status, detail, action, todoCount } in responsibleEmployees"
@@ -390,8 +389,6 @@ function publish() {
 
     <section v-else-if="entry" class="page-body">
       <div class="development-record">
-        <span class="muted">配置对象</span>
-        <strong>{{ entry.name }}</strong>
         <span class="muted">{{ employee?.role ?? selectedCapability?.type }}</span>
       </div>
       <div v-if="employee" class="development-responsibles">

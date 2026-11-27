@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PageHeader from '@/components/PageHeader.vue'
 import { computed, reactive, watch } from 'vue'
 import { useRoute, useRouter, type LocationQuery, type RouteLocationRaw } from 'vue-router'
 import { ArrowRight, Search } from 'lucide-vue-next'
@@ -173,8 +174,8 @@ const dateFormat = new Intl.DateTimeFormat('zh-CN', { month: 'short', day: 'nume
 </script>
 
 <template>
-  <section class="page page-surface task-overview" aria-label="任务总览">
-    <header class="page-controls">
+  <section class="page page-surface page-with-control-inset task-overview" aria-label="任务总览">
+    <PageHeader title="任务总览">
       <EmployeeTaskViewTabs />
       <div class="page-toolbar page-tab-toolbar">
         <div class="page-toolbar-filters overview-filters" role="group" aria-label="筛选任务">
@@ -199,7 +200,7 @@ const dateFormat = new Intl.DateTimeFormat('zh-CN', { month: 'short', day: 'nume
           <button class="reset-filters" type="button" @click="resetTaskFilters">清除任务筛选</button>
         </div>
       </div>
-    </header>
+    </PageHeader>
 
     <div class="page-body overview-layout">
       <EmployeeTaskEmployeeList

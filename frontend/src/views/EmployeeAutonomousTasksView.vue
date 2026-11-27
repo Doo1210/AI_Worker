@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PageHeader from '@/components/PageHeader.vue'
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ArrowLeft, ArrowRight, ListChecks } from 'lucide-vue-next'
@@ -36,14 +37,18 @@ function formatDate(value: string) {
 </script>
 
 <template>
-  <section class="page page-surface autonomous-page" :aria-label="selectedTask?.title ?? '自主任务'">
-    <nav class="page-controls page-toolbar page-tab-toolbar autonomous-navigation" aria-label="页面位置">
-      <RouterLink :to="fromOverview ? overviewLink : directoryLink" class="back-link"><ArrowLeft :size="15" aria-hidden="true" /> {{ fromOverview ? '任务总览' : '员工目录' }}</RouterLink>
-      <template v-if="!fromOverview && employee && hasTaskSelection">
-        <span aria-hidden="true">/</span>
-        <RouterLink :to="taskLink()" class="back-link">自主任务</RouterLink>
+  <section class="page page-surface page-with-control-inset autonomous-page" :aria-label="selectedTask?.title ?? '自主任务'">
+    <PageHeader :title="selectedTask?.title ?? '自主任务'">
+      <template #back>
+        <nav class="autonomous-navigation" aria-label="页面位置">
+          <RouterLink :to="fromOverview ? overviewLink : directoryLink" class="back-link"><ArrowLeft :size="15" aria-hidden="true" /> {{ fromOverview ? '任务总览' : '员工目录' }}</RouterLink>
+          <template v-if="!fromOverview && employee && hasTaskSelection">
+            <span aria-hidden="true">/</span>
+            <RouterLink :to="taskLink()" class="back-link">自主任务</RouterLink>
+          </template>
+        </nav>
       </template>
-    </nav>
+    </PageHeader>
 
     <el-empty v-if="!employee" description="当前账号无法查看这位员工的自主任务" :image-size="88" />
 
@@ -104,7 +109,7 @@ function formatDate(value: string) {
 </template>
 
 <style scoped>
-.autonomous-navigation { justify-content: flex-start; color: var(--muted); font-size: 13px; }
+.autonomous-navigation { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--muted); font-size: 13px; }
 .back-link { display: inline-flex; align-items: center; gap: 6px; color: var(--accent); }
 .back-link:hover { text-decoration: underline; }
 .task-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 275px), 1fr)); gap: 12px; margin: 0; list-style: none; }

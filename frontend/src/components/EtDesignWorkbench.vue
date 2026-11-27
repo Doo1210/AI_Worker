@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import PageHeader from '@/components/PageHeader.vue'
+import { recordWorkbenchOperation } from '@/workbenchUsage'
 import { computed, nextTick, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { CircleAlert, CircleCheck, ClipboardCheck, Download, FileBox, FolderOpen, Send, Sparkles } from 'lucide-vue-next'
@@ -8,12 +10,15 @@ import { ET_DESIGN_WORKBENCH_ID } from '@/stores/sample'
 import { useEtDrawingReviewStore } from '@/stores/etDrawingReview'
 import { etReviewId, etReviewTitle, useScenarioTaskStore } from '@/stores/scenarioTasks'
 import { useWorkbenchAssistant } from '@/workbenchAssistant'
+import { fileCenterName } from '@/workspaceDirectory'
 import WorkbenchAssistantSelect from '@/components/WorkbenchAssistantSelect.vue'
 import ConversationFileTree from './ConversationFileTree.vue'
 import EtDrawingCanvas from './EtDrawingCanvas.vue'
 import EtReviewWorkspace from './EtReviewWorkspace.vue'
 import { drawingSvg, getBounds, parseDrawing, sampleDxf, type DrawingEntity } from './etDrawing'
 import { getReviewFindings, reviewDrawingName, reviewDrawingSource, type EtReviewVersion } from './etReviewDrawing'
+
+defineProps<{ pageTitle: string }>()
 
 const tabs = [
   { id: 'export', label: '格式转换' },
@@ -164,7 +169,8 @@ async function openSharedVersion(version: EtReviewVersion, indices?: number[]) {
 
 function confirmChecklist() {
   if (!reviewVersion.value || !review.confirmDraft(reviewVersion.value)) return
-  ElMessage.success(`检查清单已保存到 ${etReviewId} 共享工作空间`)
+  recordWorkbenchOperation('workbench-design', '确认并保存图纸检查清单')
+  ElMessage.success(`检查清单已保存到 ${etReviewId} 共享空间`)
 }
 
 async function discardChecklist() {
@@ -277,7 +283,7 @@ async function readWorkspaceFile(file: WorkspaceFile) {
   } catch {
     // Use the same message for invalid or unreadable workspace file data.
   }
-  throw new Error('无法读取此工作空间文件，请重新选择或上传本地文件。')
+  throw new Error('无法读取此文件，请重新选择或上传本地文件。')
 }
 
 function openWorkspaceFile(id: string) {
@@ -348,22 +354,12 @@ async function askDrawing(text = question.value) {
 <template>
   <div class="et-workbench">
     <input ref="input" type="file" accept=".dxf,.dwg" hidden @change="handleFileInput" />
-    <section v-if="review.hasWorkspaceAccess" class="et-review-head page-toolbar page-tab-toolbar" aria-label="图纸评审记录">
-      <div class="et-review-context">
-        <div class="et-review-heading">
-          <ClipboardCheck :size="18" aria-hidden="true" />
-          <div><h2>{{ etReviewTitle }}</h2><span>{{ etReviewId }}</span></div>
-        </div>
-        <div v-if="reviewOpen" class="et-review-versions" role="group" aria-label="图纸版本">
-          <button type="button" class="et-review-version" :aria-pressed="reviewVersion === 'V1'" @click="selectReviewVersion('V1')">V1 <small>{{ review.release ? '上一版' : '已发布' }}</small></button>
-          <button type="button" class="et-review-version" :aria-pressed="reviewVersion === 'V2'" @click="selectReviewVersion('V2')">V2 <small>{{ review.release ? '已发布' : '待发布' }}</small></button>
-        </div>
-      </div>
-      <div class="page-toolbar-controls">
+    <PageHeader :title="pageTitle">
+      <template v-if="review.hasWorkspaceAccess" #actions>
         <RouterLink v-if="!reviewOpen" :to="reviewLocation" class="et-review-primary">打开图纸评审</RouterLink>
         <template v-else>
           <RouterLink :to="{ name: 'workbench', params: { id: ET_DESIGN_WORKBENCH_ID } }" class="et-review-text">退出评审</RouterLink>
-          <button type="button" class="et-review-button" @click="sharedWorkspaceOpen = true"><FolderOpen :size="15" aria-hidden="true" />共享工作空间</button>
+          <button type="button" class="et-review-button" @click="sharedWorkspaceOpen = true"><FolderOpen :size="15" aria-hidden="true" />共享空间</button>
           <RouterLink
             v-if="canRequestReview && reviewVersion"
             :to="{ name: 'employee-contact', params: { id: 'employee-design' }, query: { mode: 'task', review: etReviewId, version: reviewVersion } }"
@@ -378,8 +374,20 @@ async function askDrawing(text = question.value) {
           </template>
           <span v-if="!review.canEdit" class="et-review-publish-hint">仅查看</span>
         </template>
-      </div>
-    </section>
+      </template>
+      <section v-if="review.hasWorkspaceAccess" class="et-review-head page-toolbar page-tab-toolbar" aria-label="图纸评审记录">
+        <div class="et-review-context">
+          <div class="et-review-heading">
+            <ClipboardCheck :size="18" aria-hidden="true" />
+            <div><h2>{{ etReviewTitle }}</h2><span>{{ etReviewId }}</span></div>
+          </div>
+          <div v-if="reviewOpen" class="et-review-versions" role="group" aria-label="图纸版本">
+            <button type="button" class="et-review-version" :aria-pressed="reviewVersion === 'V1'" @click="selectReviewVersion('V1')">V1 <small>{{ review.release ? '上一版' : '已发布' }}</small></button>
+            <button type="button" class="et-review-version" :aria-pressed="reviewVersion === 'V2'" @click="selectReviewVersion('V2')">V2 <small>{{ review.release ? '已发布' : '待发布' }}</small></button>
+          </div>
+        </div>
+      </section>
+    </PageHeader>
     <div v-if="latestDelivery" class="et-review-result" aria-label="最近写回的结论">
       <CircleCheck :size="15" aria-hidden="true" />
       <strong>{{ latestDelivery.objectVersion }} 已写回</strong>
@@ -506,16 +514,16 @@ async function askDrawing(text = question.value) {
     <EtReviewWorkspace v-if="reviewOpen" v-model:open="sharedWorkspaceOpen" @open-version="openSharedVersion" />
     <el-dialog
       v-model="workspacePickerOpen"
-      title="选择工作空间文件"
+      :title="`从${fileCenterName}选择文件`"
       width="min(480px, calc(100vw - 28px))"
       append-to-body
       destroy-on-close
     >
-      <p class="workspace-picker-hint">从个人工作空间打开 ASCII DXF 图纸。</p>
+      <p class="workspace-picker-hint">从「我的文件」打开 ASCII DXF 图纸。</p>
       <ConversationFileTree
         class="workspace-picker-files"
         :file-filter="file => isDxf(file.name)"
-        empty-text="工作空间暂无 DXF 图纸。可先上传到工作空间，或在工作台直接上传本地文件。"
+        empty-text="我的文件暂无 DXF 图纸。可先上传到「我的文件」，或在工作台直接上传本地文件。"
         hide-heading
         @open-file="openWorkspaceFile"
       />
@@ -528,9 +536,8 @@ async function askDrawing(text = question.value) {
 .workspace-picker-files { max-height: 50vh; overflow: auto; border: 1px solid var(--line); border-radius: 8px; }
 .et-workbench { container-type: inline-size; --et-record-height: 0px; }
 .et-workbench:has(.et-review-head) { --et-record-height: 61px; }
-.et-layout { display: grid; grid-template-columns: minmax(0, 1.95fr) minmax(300px, 1fr); gap: 12px; height: max(490px, calc(var(--shell-body-height, 100dvh) - 112px - var(--et-record-height))); }
+.et-layout { display: grid; grid-template-columns: minmax(0, 1.95fr) minmax(300px, 1fr); gap: 12px; height: max(490px, calc(var(--shell-body-height, 100dvh) - var(--page-title-height) - 112px - var(--et-record-height))); }
 .et-layout.with-delivery { --et-record-height: 98px; }
-.et-review-head { border-bottom: 1px solid var(--line); }
 .et-review-context, .et-review-versions { display: flex; align-items: center; flex-wrap: wrap; min-width: 0; gap: 6px; }
 .et-review-context { column-gap: 10px; }
 .et-review-heading { display: flex; align-items: center; gap: 9px; min-width: 0; }
@@ -619,7 +626,7 @@ async function askDrawing(text = question.value) {
 .ask-form button { display: grid; flex: none; place-items: center; width: 34px; min-height: 34px; border: 0; border-radius: 7px; background: var(--accent); color: #fff; }
 .ask-form button:disabled { background: #dfe5f4; color: #637496; }
 @container (max-width: 680px) {
-  .et-layout { grid-template-columns: minmax(0, 1fr); height: auto; gap: 8px; padding: 6px; }
+  .et-layout { grid-template-columns: minmax(0, 1fr); height: auto; gap: 8px; padding: var(--page-body-start) 6px 6px; }
   .et-layout > :first-child { min-height: 350px; }
   .tool-content { padding: 16px 12px; }
   .chat-log { max-height: 300px; }

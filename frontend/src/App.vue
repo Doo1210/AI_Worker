@@ -3,16 +3,17 @@ import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from
 import { useRoute, useRouter } from 'vue-router'
 import {
   Activity, ArrowLeft, Bot, Boxes, Calculator, Check, ChevronDown, ChevronLeft, ChevronRight, Clock,
-  FolderOpen, History, LayoutDashboard, LayoutGrid, Menu, MessageSquare, Package, PenTool, Plug, Plus, Settings2, ShieldCheck, Ship, UsersRound, X,
+  FolderOpen, History, LayoutDashboard, LayoutGrid, Menu, Package, PenTool, Plug, Plus, Settings2, ShieldCheck, Ship, UsersRound, X,
 } from 'lucide-vue-next'
-import { FileSearch, ListChecks, MessagesSquare, PanelsTopLeft } from 'lucide-vue-next'
+import { FileSearch, ListChecks, PanelsTopLeft } from 'lucide-vue-next'
 import EmployeesSidebar from '@/components/EmployeesSidebar.vue'
 import EmployeeRecentContacts from '@/components/EmployeeRecentContacts.vue'
-import SidebarRecentSection from '@/components/SidebarRecentSection.vue'
+import ConversationHistory from '@/components/ConversationHistory.vue'
 import { adminCatalogs } from '@/adminCatalogs'
 import { resourceLibraryLocation, resourceTypeFromQuery, resourceTypeItems } from '@/resourceNavigation'
 import { usePlatformStore } from '@/stores/platform'
 import { useOrganizationAdminStore } from '@/stores/organizationAdmin'
+import { fileCenterName } from '@/workspaceDirectory'
 
 const store = usePlatformStore()
 const organization = useOrganizationAdminStore()
@@ -43,49 +44,48 @@ const lastPortalPage = reactive<Record<PortalTab, string>>({
   resources: portalTabs[2].home,
 })
 const adminTabs = [
-  { id: 'overview', name: '概览', items: [
-    { name: '平台概览', path: '/admin/overview', icon: LayoutDashboard },
+  { id: 'overview', name: '运行监管', items: [
+    { name: '运行总览', path: '/admin/overview', icon: LayoutDashboard, route: 'admin-overview' },
+    { name: '助理与工作台运行', path: '/admin/activity', icon: Activity, route: 'admin-activity' },
+    { name: '用量与费用', path: '/admin/usage', icon: Calculator, route: 'admin-usage' },
+    { name: 'AI 员工运行', path: '/admin/runs', icon: Bot, route: 'admin-scenario-runs' },
   ] },
   { id: 'organization', name: '组织管理', items: [
-    { name: '组织与成员', path: '/admin/members', icon: UsersRound },
-    { name: '角色与权限', path: '/admin/roles', icon: ShieldCheck },
+    { name: '组织与成员', path: '/admin/members', icon: UsersRound, route: 'admin-members' },
+    { name: '角色与权限', path: '/admin/roles', icon: ShieldCheck, route: 'admin-roles' },
   ] },
   { id: 'capabilities', name: '能力与资源', items: [
-    { name: adminCatalogs['admin-workbenches'].title, path: '/admin/workbenches', icon: LayoutGrid },
-    { name: adminCatalogs['admin-employees'].title, path: '/admin/employees', icon: Bot },
-    { name: adminCatalogs['admin-resources'].title, path: '/admin/resources', icon: Boxes },
+    { name: adminCatalogs['admin-workbenches'].title, path: '/admin/workbenches', icon: LayoutGrid, route: 'admin-workbenches' },
+    { name: adminCatalogs['admin-employees'].title, path: '/admin/employees', icon: Bot, route: 'admin-employees' },
+    { name: adminCatalogs['admin-resources'].title, path: '/admin/resources', icon: Boxes, route: 'admin-resources' },
   ] },
-  { id: 'system', name: '系统与运行', items: [
-    { name: '系统接入', path: '/admin/connections', icon: Plug },
-    { name: '运行监管', path: '/admin/runs', icon: Activity },
-    { name: '变更记录', path: '/admin/changes', icon: History },
+  { id: 'system', name: '平台管理', items: [
+    { name: '插件接入', path: '/admin/plugins', icon: Package, route: 'admin-plugins' },
+    { name: '系统连接', path: '/admin/connections', icon: Plug, route: 'admin-connections' },
+    { name: '变更记录', path: '/admin/changes', icon: History, route: 'admin-changes' },
   ] },
 ] as const
-const adminHome = computed(() => organization.isAdmin ? '/admin/overview' : '/admin/members')
+const adminHome = computed(() => organization.adminHome)
 const lastAdminPage = reactive<Record<(typeof adminTabs)[number]['id'], string>>({
-  overview: '/admin/overview',
-  organization: '/admin/members',
-  capabilities: '/admin/workbenches',
-  system: '/admin/connections',
+  overview: '/admin/overview', organization: '/admin/members', capabilities: '/admin/workbenches', system: '/admin/plugins',
 })
 const lastUse = ref(lastPortalPage.work)
 const lastAdmin = ref<string>(adminHome.value)
 const isAdmin = computed(() => route.path.startsWith('/admin'))
-const showSidebar = computed(() => route.name !== 'admin-overview')
+const showSidebar = computed(() => true)
 const portalTab = computed<PortalTab>(() => {
   if (route.path === '/employees' || route.path.startsWith('/employees/')) return 'employees'
   if (route.path === '/work/resources' || route.path.startsWith('/work/resources/')) return 'resources'
   return 'work'
 })
 const adminTab = computed(() => adminTabs.find(tab => tab.items.some(item => isAdminItemActive(item.path))) ?? adminTabs[0])
-const adminItems = computed(() => adminTab.value.items.filter(item => organization.isAdmin || item.path !== '/admin/roles'))
+const adminItems = computed(() => adminTab.value.items.filter(item => organization.canVisitAdmin(item.route)))
 const activeTab = computed(() => isAdmin.value ? adminTab.value.id : portalTab.value)
 const headerTabs = computed(() => isAdmin.value
-  ? adminTabs.filter(tab => organization.isAdmin || tab.id === 'organization')
-    .map(({ id, name }) => ({ id, name, to: lastAdminPage[id] }))
+  ? adminTabs.filter(tab => tab.items.some(item => organization.canVisitAdmin(item.route)))
+    .map(tab => ({ id: tab.id, name: tab.name, to: tab.items.some(item => organization.canVisitAdmin(item.route) && lastAdminPage[tab.id].startsWith(item.path)) ? lastAdminPage[tab.id] : tab.items.find(item => organization.canVisitAdmin(item.route))!.path }))
   : portalTabs.map(({ id, name }) => ({ id, name, to: lastPortalPage[id] })))
 const activeResourceType = computed(() => resourceTypeFromQuery(route.query))
-const isChat = computed(() => route.path.startsWith('/work/chat'))
 const enterAdminLabel = '管理后台'
 const returnToPortalLabel = '返回工作门户'
 
@@ -93,7 +93,7 @@ const workspacePath = '/work/workspace'
 const isWorkspace = computed(() => route.path === workspacePath)
 const workItems = computed(() => [
   { name: '我的助理', to: '/work/assistants', icon: Bot, active: route.path.startsWith('/work/assistants') },
-  { name: '工作空间', to: isWorkspace.value ? route.fullPath : workspacePath, icon: FolderOpen, active: isWorkspace.value },
+  { name: fileCenterName, to: isWorkspace.value ? route.fullPath : workspacePath, icon: FolderOpen, active: isWorkspace.value },
   { name: '自动化任务', to: '/work/automations', icon: Clock, active: route.name === 'personal-automations' },
 ])
 
@@ -254,17 +254,7 @@ function switchAccount(id: string) {
             </div>
           </section>
 
-          <SidebarRecentSection label="最近会话" :compact="isCompact">
-            <template #icon><MessagesSquare :size="18" :stroke-width="1.8" aria-hidden="true" /></template>
-            <template #default="{ close }">
-              <nav v-if="store.personalConversations.length" class="history-nav" aria-label="最近会话">
-                <RouterLink v-for="chat in store.personalConversations.slice(0, 12)" :key="chat.id" :to="`/work/chat/${chat.id}`" class="history-link" :class="{ active: isChat && route.params.id === chat.id }" :title="chat.title" @click="close(); mobileMenu = false">
-                  <MessageSquare :size="15" :stroke-width="1.8" aria-hidden="true" /><span>{{ chat.title }}</span>
-                </RouterLink>
-              </nav>
-              <p v-else class="history-empty">暂无会话</p>
-            </template>
-          </SidebarRecentSection>
+          <ConversationHistory :key="store.currentUser.id" :compact="isCompact" @navigate="mobileMenu = false" />
         </template>
       </div>
 

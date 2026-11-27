@@ -41,13 +41,6 @@
 
 .cost-shell { grid-column: 2; grid-row: 1 / -1; display: flex; flex-direction: column; min-width: 0; }
 .cost-footer { display: flex; align-items: center; justify-content: space-between; gap: 9px 12px; }
-.cost-toolbar {
-  min-height: 43px;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--cost-line);
-  background: #fbfbfc;
-}
-.cost-toolbar.page-toolbar { margin-bottom: 0; }
 .cost-crumbs { display: flex; align-items: center; min-width: 0; max-width: 100%; gap: 8px; }
 .cost-home-link, .cost-project-button, .cost-search-button, .cost-ai-button, .cost-icon-button, .cost-text-button {
   display: inline-flex;
@@ -72,7 +65,7 @@
 .cost-search-button:hover { background: #e7ebef; color: var(--cost-ink); }
 .cost-search-button kbd { margin-left: 10px; font: inherit; font-size: 10px; opacity: .82; }
 
-.cost-content { display: grid; grid-template-columns: minmax(0, 1fr); flex: 1; min-width: 0; }
+.cost-content { display: grid; grid-template-columns: minmax(0, 1fr); flex: 1; min-width: 0; padding-block-start: var(--page-body-start); }
 .cost-content.has-assistant { grid-template-columns: minmax(0, 1fr) 260px; }
 .cost-body { display: flex; flex-direction: column; min-width: 0; }
 .cost-button {
@@ -232,7 +225,7 @@
   .cost-dock .cost-dock-home { display: none; }
   .cost-shell { grid-column: 1 / -1; }
   .cost-dock + .cost-shell { grid-row: 2; }
-  .cost-toolbar, .cost-footer { padding-inline: 9px; }
+  .cost-footer { padding-inline: 9px; }
   .cost-footer { flex-wrap: wrap; }
   .cost-search-button kbd, .cost-footer small { display: none; }
   .cost-overview, .cost-section-body, .cost-projects { padding-inline: 9px; }

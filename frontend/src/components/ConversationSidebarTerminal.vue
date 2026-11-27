@@ -42,7 +42,7 @@ function findFolder(parts: string[]) {
 
 function run(command: string, argument: string): { text: string; error?: boolean } {
   if (command === 'help') {
-    return { text: 'help          查看可用命令\npwd           显示工作空间路径\nls [目录]     列出文件和目录\ncat <文件>    查看文本内容\nclear         清空屏幕' }
+    return { text: 'help          查看可用命令\npwd           显示工作目录路径\nls [目录]     列出文件和目录\ncat <文件>    查看文本内容\nclear         清空屏幕' }
   }
   if (command === 'pwd' && !argument) return { text: workspaceRoot }
   if (command === 'ls') {

@@ -1,40 +1,44 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { ChevronRight, FileSpreadsheet, FileText, Folder, FolderOpen, Image } from 'lucide-vue-next'
-import { usePlatformStore, type WorkspaceFile, type WorkspaceFolder } from '@/stores/platform'
+import { usePlatformStore } from '@/stores/platform'
+import type { DirectoryFile, DirectoryFolder, ResolvedWorkspaceDirectory } from '@/workspaceDirectory'
 
-type Entry = { kind: 'folder'; item: WorkspaceFolder } | { kind: 'file'; item: WorkspaceFile }
+type Entry = { kind: 'folder'; item: DirectoryFolder } | { kind: 'file'; item: DirectoryFile }
 type Row = Entry & { depth: number }
 
 const props = withDefaults(defineProps<{
   activeFileId?: string
-  fileFilter?: (file: WorkspaceFile) => boolean
+  directory?: ResolvedWorkspaceDirectory
+  fileFilter?: (file: DirectoryFile) => boolean
   hideHeading?: boolean
   emptyText?: string
-}>(), { emptyText: '工作空间暂无文件' })
+}>(), { emptyText: '当前目录暂无文件' })
 const emit = defineEmits<{ openFile: [id: string] }>()
 const store = usePlatformStore()
 const expandedFolders = ref(new Set<string>())
 const nameOrder = new Intl.Collator('zh-CN', { numeric: true, sensitivity: 'base' })
+const files = computed(() => props.directory?.files ?? store.myFiles)
+const folders = computed(() => props.directory?.folders ?? store.myFolders)
 
 const rows = computed(() => {
-  const files = props.fileFilter ? store.myFiles.filter(props.fileFilter) : store.myFiles
-  let folders = store.myFolders
+  const matchingFiles = props.fileFilter ? files.value.filter(props.fileFilter) : files.value
+  let shownFolders = folders.value
   if (props.fileFilter) {
-    const foldersById = new Map(folders.map(folder => [folder.id, folder]))
+    const foldersById = new Map(shownFolders.map(folder => [folder.id, folder]))
     const included = new Set<string>()
-    for (const file of files) {
+    for (const file of matchingFiles) {
       let id = file.folderId
       while (id && !included.has(id)) {
         included.add(id)
         id = foldersById.get(id)?.parentId
       }
     }
-    folders = folders.filter(folder => included.has(folder.id))
+    shownFolders = shownFolders.filter(folder => included.has(folder.id))
   }
   const entries: Entry[] = [
-    ...folders.map(item => ({ kind: 'folder' as const, item })),
-    ...files.map(item => ({ kind: 'file' as const, item })),
+    ...shownFolders.map(item => ({ kind: 'folder' as const, item })),
+    ...matchingFiles.map(item => ({ kind: 'file' as const, item })),
   ]
   const byParent = new Map<string | undefined, Entry[]>()
   for (const entry of entries) {
@@ -56,7 +60,7 @@ const rows = computed(() => {
     }
   }
 
-  appendChildren(undefined, 0)
+  appendChildren(props.directory?.folderId, 0)
   return visible
 })
 
@@ -77,14 +81,14 @@ function entryIcon(entry: Entry) {
   return FileText
 }
 
-watch(() => store.currentUser.id, () => expandedFolders.value.clear())
-watch([() => props.activeFileId, () => store.currentUser.id], () => {
-  const folders = new Map(store.myFolders.map(folder => [folder.id, folder]))
-  const file = store.myFiles.find(item => item.id === props.activeFileId)
+watch([() => store.currentUser.id, () => props.directory?.spaceId, () => props.directory?.folderId], () => expandedFolders.value.clear())
+watch([() => props.activeFileId, files, folders], () => {
+  const foldersById = new Map(folders.value.map(folder => [folder.id, folder]))
+  const file = files.value.find(item => item.id === props.activeFileId)
   const visited = new Set<string>()
   let folderId = file?.folderId
   while (folderId && !visited.has(folderId)) {
-    const folder = folders.get(folderId)
+    const folder = foldersById.get(folderId)
     if (!folder) break
     visited.add(folderId)
     expandedFolders.value.add(folderId)
@@ -94,8 +98,8 @@ watch([() => props.activeFileId, () => store.currentUser.id], () => {
 </script>
 
 <template>
-  <section class="file-tree" aria-label="工作空间文件">
-    <h3 v-if="!hideHeading" class="file-tree-heading"><FolderOpen :size="15" aria-hidden="true" />工作空间</h3>
+  <section class="file-tree" aria-label="工作目录文件">
+    <h3 v-if="!hideHeading" class="file-tree-heading" :title="directory?.path"><FolderOpen :size="15" aria-hidden="true" />{{ directory?.label ?? '工作目录' }}</h3>
     <ul v-if="rows.length" class="file-tree-list">
       <li v-for="entry in rows" :key="entry.kind + '-' + entry.item.id">
         <button

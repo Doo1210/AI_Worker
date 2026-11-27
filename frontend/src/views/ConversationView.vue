@@ -1,27 +1,38 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ArrowRight, ArrowUp, CircleCheck, DataAnalysis, Document, Files, Paperclip, Reading, Star } from '@element-plus/icons-vue'
-import { Clock, PanelRight } from 'lucide-vue-next'
+import { ArrowDown, ArrowUp, Bot, Check, Clock, Copy, FileText, FolderOpen, LoaderCircle, PanelRight, Paperclip, Plus, X } from 'lucide-vue-next'
 import { ElMessage, ElOptionGroup } from 'element-plus'
 import { usePlatformStore, type Assistant } from '@/stores/platform'
 import { usePersonalAutomationsStore } from '@/stores/personalAutomations'
+import { useSharedWorkspacesStore } from '@/stores/sharedWorkspaces'
+import { conversationDirectoryDisplay, personalFilesName, sharedSpacesName, type DirectoryFolder } from '@/workspaceDirectory'
 import { automationChatExample, isAutomationRequest, parseAutomationRequest } from '@/automationChatRequest'
 import ConversationArtifactDialog from '@/components/ConversationArtifactDialog.vue'
+import ConversationMarkdown from '@/components/ConversationMarkdown.vue'
 import ConversationRightSidebar, { type SidebarLayout, type SidebarTab } from '@/components/ConversationRightSidebar.vue'
 
 const platform = usePlatformStore()
 const automations = usePersonalAutomationsStore()
+const shared = useSharedWorkspacesStore()
 const route = useRoute()
 const router = useRouter()
 const selectedAssistant = ref('default')
+const directoryKey = (spaceId?: string, folderId?: string) => JSON.stringify([spaceId, folderId])
+const selectedDirectoryKey = ref(directoryKey())
 const draft = ref('')
 const attachedIds = ref<string[]>([])
 const pendingId = ref('')
 const artifactId = ref('')
 const artifactOpen = ref(false)
 const composer = ref<HTMLTextAreaElement>()
-const threadEnd = ref<HTMLElement>()
+const composerToolbar = ref<HTMLElement>()
+const scrollport = ref<HTMLElement>()
+const followingTail = ref(true)
+const referenceMenuOpen = ref(false)
+const referenceFilter = ref('')
+const mention = ref<{ start: number; end: number }>()
+const referenceIndex = ref(0)
 const sidebarToggle = ref<HTMLButtonElement>()
 const rightSidebar = ref<InstanceType<typeof ConversationRightSidebar>>()
 const sidebarLayout = ref<SidebarLayout>({ open: false, tabs: ['guide'], active: 'guide' })
@@ -39,27 +50,63 @@ const artifact = computed(() => conversation.value?.messages.find(message => mes
 const sidebarSession = computed(() => conversation.value?.id ?? 'new')
 const activeAssistant = computed(() => platform.visibleAssistants.find((item) => item.id === (conversation.value?.assistantId ?? selectedAssistant.value)))
 const assistantGroups = computed(() => [
-  { label: '平台默认', assistants: platform.visibleAssistants.filter(assistant => assistant.id === 'default') },
+  { label: '平台内置', assistants: platform.visibleAssistants.filter(assistant => assistant.id === 'default') },
   { label: '个人配置', assistants: platform.myAssistants },
   { label: '组织共享', assistants: platform.sharedAssistants.filter(assistant => assistant.scope === 'organization') },
   { label: '成员共享', assistants: platform.sharedAssistants.filter(assistant => assistant.scope !== 'organization') },
 ].filter(group => group.assistants.length))
-const contextFile = computed(() => platform.myFiles.find(file => file.id === route.query.context))
+
+function directoryOptions(name: string | undefined, folders: DirectoryFolder[], spaceId?: string) {
+  const byId = new Map(folders.map(folder => [folder.id, folder]))
+  const subfolders = folders.map(folder => ({
+    key: directoryKey(spaceId, folder.id), spaceId, folderId: folder.id,
+    ...conversationDirectoryDisplay(name, byId, folder.id),
+  })).sort((a, b) => a.path.localeCompare(b.path, 'zh-CN'))
+  return [{ key: directoryKey(spaceId), spaceId, folderId: undefined, ...conversationDirectoryDisplay(name, byId) }, ...subfolders]
+}
+
+const directoryGroups = computed(() => [
+  { label: personalFilesName, options: directoryOptions(undefined, platform.myFolders) },
+  { label: sharedSpacesName, options: shared.workspaces.flatMap(space => directoryOptions(space.name, space.folders, space.id)) },
+].filter(group => group.options.length))
+const selectedDirectory = computed(() => directoryGroups.value.flatMap(group => group.options)
+  .find(option => option.key === selectedDirectoryKey.value))
+const activeDirectory = computed(() => {
+  if (conversation.value) return platform.resolveConversationDirectory(conversation.value.directory)
+  if (selectedDirectory.value) return platform.resolveConversationDirectory(selectedDirectory.value)
+})
+const directoryFiles = computed(() => activeDirectory.value?.files ?? [])
+const workspaceLocation = computed(() => ({ path: '/work/workspace', query: {
+  scope: activeDirectory.value?.spaceId === undefined ? undefined : 'shared',
+  space: activeDirectory.value?.spaceId, folder: activeDirectory.value?.folderId,
+} }))
+const bindingIssue = computed(() => {
+  if (!activeAssistant.value) return '当前助理不可用。'
+  if (!activeDirectory.value) return '当前工作目录不可用。'
+  return ''
+})
+const contextFile = computed(() => {
+  const space = typeof route.query.space === 'string' ? route.query.space : undefined
+  if (activeDirectory.value?.spaceId === space) return directoryFiles.value.find(file => file.id === route.query.context)
+})
 const businessContext = computed(() => {
   const workbench = platform.visibleWorkbenches.find(item => item.id === route.query.workbench)
   const record = workbench?.records.find(item => item.id === route.query.record)
   return workbench && record ? { workbench, record } : undefined
 })
 const contextLabel = computed(() => contextFile.value?.name ?? businessContext.value?.record.title)
-const attachedFiles = computed(() => platform.myFiles.filter((file) => attachedIds.value.includes(file.id)))
+const attachedFiles = computed(() => directoryFiles.value.filter(file => attachedIds.value.includes(file.id)))
+const matchingReferences = computed(() => directoryFiles.value.filter(file =>
+  file.name.toLocaleLowerCase().includes(referenceFilter.value.trim().toLocaleLowerCase())))
 
 const examples = [
-  { title: '整理会议纪要', text: '帮我把会议记录整理成纪要，列出决议、待办和负责人。', icon: Document },
-  { title: '分析一组数据', text: '帮我分析业务数据，找出变化最明显的指标并说明可能的原因。', icon: DataAnalysis },
-  { title: '起草工作汇报', text: '帮我起草一份周报，按本周成果、风险和下周计划组织。', icon: Reading },
+  { title: '整理会议纪要', text: '帮我把会议记录整理成纪要，列出决议、待办和负责人。' },
+  { title: '分析一组数据', text: '帮我分析业务数据，找出变化最明显的指标并说明可能的原因。' },
+  { title: '起草工作汇报', text: '帮我起草一份周报，按本周成果、风险和下周计划组织。' },
 ]
-const automationExamples = [{ title: automationChatExample, text: automationChatExample, icon: Clock }]
+const automationExamples = [{ title: automationChatExample, text: automationChatExample }]
 const automationStartFormat = new Intl.DateTimeFormat('zh-CN', { dateStyle: 'medium', timeStyle: 'short' })
+const messageTimeFormat = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
 
 function assistantLabel(assistant: Assistant) {
   if (assistant.scope === 'organization') return `${assistant.name} · 组织共享`
@@ -80,8 +127,14 @@ function updateScreenSize(event: MediaQueryListEvent) {
   narrowScreen.value = event.matches
 }
 
-onMounted(() => sidebarBreakpoint.addEventListener('change', updateScreenSize))
-onBeforeUnmount(() => sidebarBreakpoint.removeEventListener('change', updateScreenSize))
+onMounted(() => {
+  sidebarBreakpoint.addEventListener('change', updateScreenSize)
+  document.addEventListener('pointerdown', dismissReferencesOnPointer)
+})
+onBeforeUnmount(() => {
+  sidebarBreakpoint.removeEventListener('change', updateScreenSize)
+  document.removeEventListener('pointerdown', dismissReferencesOnPointer)
+})
 
 watch([() => sidebarLayout.value.open, sidebarOverlay], ([open, overlay], [wasOpen, wasOverlay]) => {
   if (open && (!wasOpen || (overlay && !wasOverlay))) {
@@ -134,6 +187,7 @@ function toggleSidebar() {
 }
 
 function addSidebarReference(id: string) {
+  if (!directoryFiles.value.some(file => file.id === id)) return
   if (contextFile.value?.id !== id && !attachedIds.value.includes(id)) attachedIds.value = [...attachedIds.value, id]
   if (sidebarOverlay.value) toggleSidebar()
   void nextTick(() => composer.value?.focus())
@@ -150,30 +204,126 @@ watch(
   { immediate: true },
 )
 
+watch([requestedConversation, () => route.query.space], () => {
+  if (requestedConversation.value) return
+  const space = route.query.space
+  selectedDirectoryKey.value = typeof space === 'string' && shared.workspaces.some(workspace => workspace.id === space)
+    ? directoryKey(space) : directoryKey()
+}, { immediate: true })
+
+watch(selectedDirectoryKey, () => {
+  if (requestedConversation.value) return
+  attachedIds.value = []
+  closeReferences()
+  const layout = sidebarLayout.value
+  const tabs = layout.tabs.filter(tab => !tab.startsWith('file:'))
+  if (tabs.length === layout.tabs.length) return
+  if (!tabs.length) tabs.push('guide')
+  updateSidebarLayout({ ...layout, tabs, active: tabs.includes(layout.active) ? layout.active : tabs[0]! })
+})
+
 watch(() => platform.currentUser.id, () => {
   draft.value = ''
   attachedIds.value = []
 })
 
 watch(requestedConversation, () => {
+  draft.value = ''
+  attachedIds.value = []
   artifactOpen.value = false
   artifactId.value = ''
+  closeReferences()
 })
 
 watch(
-  () => [conversation.value?.id, conversation.value?.messages.length, pendingId.value],
-  () => nextTick(() => threadEnd.value?.scrollIntoView({ block: 'end', behavior: 'smooth' })),
+  [requestedConversation, () => conversation.value?.messages.length, pendingId],
+  ([id], [previousId]) => {
+    if (id !== previousId || followingTail.value) scrollToLatest()
+  },
+  { flush: 'post', immediate: true },
 )
+
+function onTranscriptScroll() {
+  const element = scrollport.value
+  if (element) followingTail.value = element.scrollHeight - element.clientHeight - element.scrollTop < 40
+}
+
+function scrollToLatest() {
+  followingTail.value = true
+  const element = scrollport.value
+  if (element) element.scrollTop = element.scrollHeight
+}
+
+onMounted(scrollToLatest)
 
 function fillDraft(text: string) {
   draft.value = text
-  nextTick(() => composer.value?.focus())
+  closeReferences()
+  void nextTick(() => composer.value?.focus())
 }
 
 function toggleFile(id: string) {
   attachedIds.value = attachedIds.value.includes(id)
     ? attachedIds.value.filter((current) => current !== id)
     : [...attachedIds.value, id]
+}
+
+function closeReferences() {
+  referenceMenuOpen.value = false
+  referenceFilter.value = ''
+  mention.value = undefined
+  referenceIndex.value = 0
+}
+
+function dismissReferencesOnPointer(event: PointerEvent) {
+  if (referenceMenuOpen.value && event.target instanceof Node && event.target !== composer.value
+    && !composerToolbar.value?.contains(event.target)) closeReferences()
+}
+
+function updateMention(event: Event) {
+  if ('isComposing' in event && event.isComposing) return
+  const input = composer.value
+  if (!input) return
+  const end = input.selectionStart
+  const match = /(?:^|\s)(@([^@\s]*))$/u.exec(input.value.slice(0, end))
+  if (!match) {
+    if (mention.value) closeReferences()
+    return
+  }
+  mention.value = { start: end - match[1].length, end }
+  referenceFilter.value = match[2]
+  referenceIndex.value = 0
+  referenceMenuOpen.value = true
+}
+
+function chooseReference(id: string) {
+  const range = mention.value
+  if (!range) {
+    toggleFile(id)
+    return
+  }
+  if (contextFile.value?.id !== id && !attachedIds.value.includes(id)) attachedIds.value = [...attachedIds.value, id]
+  draft.value = draft.value.slice(0, range.start) + draft.value.slice(range.end)
+  closeReferences()
+  void nextTick(() => {
+    composer.value?.focus()
+    composer.value?.setSelectionRange(range.start, range.start)
+  })
+}
+
+function navigateReferences(event: KeyboardEvent, direction: number) {
+  if (event.isComposing || !mention.value || !referenceMenuOpen.value || !matchingReferences.value.length) return
+  event.preventDefault()
+  const count = matchingReferences.value.length
+  referenceIndex.value = (referenceIndex.value + direction + count) % count
+  void nextTick(() => document.getElementById('conversation-reference-' + referenceIndex.value)?.scrollIntoView({ block: 'nearest' }))
+}
+
+function handleEscape(event: KeyboardEvent) {
+  if (referenceMenuOpen.value) {
+    event.stopPropagation()
+    closeReferences()
+  } else if (event.target === composer.value && sidebarLayout.value.open) toggleSidebar()
 }
 
 function removeContext() {
@@ -185,11 +335,25 @@ function removeContext() {
 }
 
 function fileLabel(fileId: string) {
-  return platform.myFiles.find((file) => file.id === fileId)?.name
+  return directoryFiles.value.find(file => file.id === fileId)?.name
 }
 
 function isSaved(messageId: string) {
-  return platform.myFiles.some((file) => file.id === 'artifact-' + messageId)
+  return directoryFiles.value.some(file => file.id === 'artifact-' + messageId)
+}
+
+function messageTime(value: string) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? '' : messageTimeFormat.format(date)
+}
+
+async function copyMessage(text: string) {
+  try {
+    await navigator.clipboard.writeText(text)
+    ElMessage.success('已复制')
+  } catch {
+    ElMessage.error('复制失败，请重试')
+  }
 }
 
 function replyToAutomation(text: string, previousRequest?: string) {
@@ -210,9 +374,10 @@ function replyToAutomation(text: string, previousRequest?: string) {
 
 async function send() {
   const text = draft.value.trim()
-  if (!text || pendingId.value) return
-  if (!activeAssistant.value) {
-    ElMessage.warning('当前助理已不可用，请重新选择助理')
+  if (!text || pendingId.value || conversation.value?.archived) return
+  const directory = activeDirectory.value
+  if (bindingIssue.value || !directory) {
+    ElMessage.warning(bindingIssue.value)
     return
   }
   const references = attachedFiles.value.map((file) => file.id)
@@ -224,8 +389,15 @@ async function send() {
   const previousReply = conversation.value?.messages.at(-1)
   const previousRequest = previousReply?.role === 'assistant' ? previousReply.automationRequest : undefined
   const scheduling = automationMode.value || !!previousRequest || isAutomationRequest(text)
-  const id = conversation.value?.id ?? platform.createConversation(selectedAssistant.value, text.replace(/\s+/g, ' ').slice(0, 28))
+  const id = conversation.value?.id ?? platform.createConversation(selectedAssistant.value,
+    text.replace(/\s+/g, ' ').slice(0, 28), { spaceId: directory.spaceId, folderId: directory.folderId })
+  if (!id) {
+    ElMessage.warning('当前工作目录不可用，请重新选择')
+    return
+  }
   pendingId.value = id
+  followingTail.value = true
+  closeReferences()
   draft.value = ''
   attachedIds.value = []
   try {
@@ -236,8 +408,10 @@ async function send() {
     await platform.sendConversationMessage(id, message, references,
       scheduling ? () => replyToAutomation(text, previousRequest) : undefined)
   } catch {
-    draft.value = text
-    attachedIds.value = references
+    if (requestedConversation.value === id) {
+      draft.value = text
+      attachedIds.value = references
+    }
     ElMessage.error('发送失败，请重试')
   } finally {
     pendingId.value = ''
@@ -247,6 +421,11 @@ async function send() {
 function handleEnter(event: KeyboardEvent) {
   if (event.shiftKey || event.isComposing) return
   event.preventDefault()
+  if (mention.value && referenceMenuOpen.value) {
+    const file = matchingReferences.value[referenceIndex.value]
+    if (file) chooseReference(file.id)
+    return
+  }
   void send()
 }
 
@@ -257,233 +436,311 @@ function openArtifact(messageId: string) {
 </script>
 
 <template>
-  <div
-    class="page-surface conversation-layout"
-    :class="{ 'has-sidebar': sidebarLayout.open, 'sidebar-expanded': sidebarExpanded }"
-    @keydown.esc="sidebarLayout.open && toggleSidebar()"
-  >
+  <div class="page-surface conversation-layout" :class="{ 'has-sidebar': sidebarLayout.open, 'sidebar-expanded': sidebarExpanded }"
+    @keydown.esc="handleEscape">
     <div class="conversation-main" :inert="sidebarOverlay">
-      <div v-show="!sidebarLayout.open" class="sidebar-control">
-        <button
-          ref="sidebarToggle"
-          class="icon-button sidebar-toggle"
-          type="button"
-          aria-label="展开右侧栏"
-          title="展开右侧栏"
-          aria-expanded="false"
-          aria-controls="conversation-right-sidebar"
-          @click="toggleSidebar"
-        ><PanelRight :size="18" aria-hidden="true" /></button>
-      </div>
-      <div class="page-body conversation-page" :class="{ 'with-thread': conversation }">
+      <header class="conversation-header" :class="{ 'is-blank': !conversation }">
+        <div v-if="conversation" class="session-heading">
+          <h1 :title="conversation.title">{{ conversation.title }}</h1>
+          <div class="session-bindings" role="group" aria-label="会话绑定">
+            <span :title="activeAssistant?.name"><Bot :size="14" aria-hidden="true" /><span>{{ activeAssistant?.name ?? '助理不可用' }}</span></span>
+            <span :title="activeDirectory?.path"><FolderOpen :size="14" aria-hidden="true" /><span>{{ activeDirectory?.label ?? '工作目录不可用' }}</span></span>
+          </div>
+        </div>
+        <button v-show="!sidebarLayout.open" ref="sidebarToggle" class="icon-button sidebar-toggle" type="button"
+          aria-label="展开右侧栏" title="展开右侧栏" aria-expanded="false" aria-controls="conversation-right-sidebar" @click="toggleSidebar">
+          <PanelRight :size="18" aria-hidden="true" />
+        </button>
+      </header>
+
+      <div ref="scrollport" class="conversation-page" :class="{ 'with-thread': conversation, 'is-new-chat': !conversation && !automationMode }"
+        @scroll.passive="onTranscriptScroll">
         <section v-if="!conversation" class="welcome">
-          <div class="assistant-mark" aria-hidden="true"><el-icon><Star /></el-icon></div>
-          <h1>{{ automationMode ? '创建自动化任务' : '我可以帮你做什么？' }}</h1>
-          <p>{{ automationMode ? '告诉助理什么时候运行、要做什么。' : '整理资料、分析数据、起草文档，或直接说说你的想法。' }}</p>
+          <Bot v-if="automationMode" :size="30" :stroke-width="1.7" aria-hidden="true" />
+          <h1>{{ automationMode ? '创建自动化任务' : '新建会话' }}</h1>
         </section>
 
-        <template v-else>
-          <section class="thread" :aria-label="'会话消息 · ' + conversation.title" aria-live="polite">
-            <article v-for="message in conversation.messages" :key="message.id" class="message" :class="'is-' + message.role">
-              <div v-if="message.role === 'assistant'" class="message-avatar" aria-hidden="true"><el-icon><Star /></el-icon></div>
-              <div class="message-body">
-                <div v-if="message.role === 'assistant'" class="message-author">{{ activeAssistant?.name ?? '助理' }}</div>
-                <div class="message-text">{{ message.text }}</div>
-                <div v-if="message.references?.length" class="message-references">
-                  <template v-for="(reference, index) in message.references" :key="index">
-                    <button v-if="fileLabel(reference)" type="button" @click="rightSidebar?.openFile(reference)">
-                      <el-icon><Paperclip /></el-icon>{{ fileLabel(reference) }}
-                    </button>
-                    <span v-else><el-icon><Paperclip /></el-icon>引用文件</span>
-                  </template>
-                </div>
-                <button v-if="message.artifactName" class="artifact" type="button" @click="openArtifact(message.id)">
-                  <el-icon><component :is="isSaved(message.id) ? CircleCheck : Document" /></el-icon>
-                  <span>{{ fileLabel('artifact-' + message.id) ?? message.artifactName }}</span>
-                  <strong>{{ isSaved(message.id) ? '已保存 · 查看' : '预览与编辑' }}</strong>
-                </button>
-                <RouterLink v-if="message.automationTaskId && automationTaskIds.has(message.automationTaskId)"
-                  class="artifact" :to="{ name: 'personal-automations', query: { task: message.automationTaskId } }">
-                  <Clock :size="15" aria-hidden="true" /><strong>查看自动化任务</strong>
-                </RouterLink>
+        <section v-else class="thread" :aria-label="'会话消息 · ' + conversation.title" role="log">
+          <article v-for="message in conversation.messages" :key="message.id" class="message" :class="'is-' + message.role">
+            <div class="message-body">
+              <div v-if="message.references?.length" class="message-references">
+                <template v-for="(reference, index) in message.references" :key="index">
+                  <button v-if="fileLabel(reference)" type="button" @click="rightSidebar?.openFile(reference)">
+                    <Paperclip :size="14" aria-hidden="true" />{{ fileLabel(reference) }}
+                  </button>
+                  <span v-else><Paperclip :size="14" aria-hidden="true" />引用文件已不可用</span>
+                </template>
               </div>
-            </article>
-            <div v-if="pendingId === conversation.id" class="reply-status"><span class="reply-dot"></span>{{ activeAssistant?.name ?? '助理' }}正在处理</div>
-            <div ref="threadEnd" class="thread-end"></div>
-          </section>
-        </template>
+              <p v-if="message.role === 'user'" class="message-text">{{ message.text }}</p>
+              <ConversationMarkdown v-else class="assistant-response" :text="message.text" />
+              <div v-if="message.artifactName" class="artifact-card">
+                <button type="button" class="artifact-preview" :aria-label="'预览 ' + (fileLabel('artifact-' + message.id) ?? message.artifactName)"
+                  @click="rightSidebar?.openArtifact(message.id)">
+                  <span class="artifact-icon"><FileText :size="20" aria-hidden="true" /></span>
+                  <span class="artifact-details">
+                    <strong>{{ fileLabel('artifact-' + message.id) ?? message.artifactName }}</strong>
+                    <small>{{ isSaved(message.id) ? '已保存到工作目录' : '在右侧栏预览' }}</small>
+                  </span>
+                </button>
+                <button v-if="activeDirectory?.canWrite" class="artifact-edit" type="button" @click="openArtifact(message.id)">{{ isSaved(message.id) ? '编辑' : '编辑与保存' }}</button>
+              </div>
+              <RouterLink v-if="message.automationTaskId && automationTaskIds.has(message.automationTaskId)"
+                class="automation-link" :to="{ name: 'personal-automations', query: { task: message.automationTaskId } }">
+                <Clock :size="15" aria-hidden="true" />查看自动化任务
+              </RouterLink>
+            </div>
+            <div class="message-actions">
+              <button type="button" :aria-label="message.role === 'user' ? '复制消息' : '复制回复'" title="复制" @click="copyMessage(message.text)">
+                <Copy :size="15" aria-hidden="true" />
+              </button>
+              <time :datetime="message.createdAt">{{ messageTime(message.createdAt) }}</time>
+            </div>
+          </article>
+          <div v-if="pendingId === conversation.id" class="reply-status" role="status">
+            <LoaderCircle :size="15" aria-hidden="true" />{{ activeAssistant?.name ?? '助理' }}正在处理
+          </div>
+        </section>
 
         <section class="composer-section" aria-label="发送消息">
-          <div v-if="conversation && !activeAssistant" class="assistant-unavailable">
-            该助理当前不可用。<RouterLink to="/work/chat">新建会话</RouterLink>可选择其他助理继续。
+          <button v-if="conversation && !followingTail" class="latest-button icon-button" aria-label="回到最新消息" title="回到最新消息" @click="scrollToLatest">
+            <ArrowDown :size="17" aria-hidden="true" />
+          </button>
+          <div v-if="!conversation" class="composer-bindings" role="group" aria-label="会话绑定">
+            <el-select v-model="selectedDirectoryKey" aria-label="选择工作目录" placeholder="选择工作目录" class="directory-select"
+              :title="activeDirectory?.path" popper-class="conversation-binding-options" filterable>
+              <template #prefix><FolderOpen :size="15" aria-hidden="true" /></template>
+              <template #label>{{ selectedDirectory?.label }}</template>
+              <el-option-group v-for="group in directoryGroups" :key="group.label" :label="group.label">
+                <el-option v-for="option in group.options" :key="option.key" :value="option.key"
+                  :label="option.folderId ? option.path : option.label" :title="option.path">{{ option.label }}</el-option>
+              </el-option-group>
+            </el-select>
+            <el-select v-model="selectedAssistant" aria-label="选择助理" placeholder="选择助理" class="assistant-select"
+              popper-class="conversation-binding-options">
+              <template #prefix><Bot :size="15" aria-hidden="true" /></template>
+              <el-option-group v-for="group in assistantGroups" :key="group.label" :label="group.label">
+                <el-option v-for="assistant in group.assistants" :key="assistant.id" :value="assistant.id" :label="assistantLabel(assistant)" />
+              </el-option-group>
+            </el-select>
+          </div>
+          <div v-if="conversation?.archived" class="binding-issue archived-conversation">
+            <span>此会话已归档</span>
+            <button type="button" @click="platform.setConversationArchived(conversation.id, false)">取消归档</button>
+          </div>
+          <div v-else-if="conversation && bindingIssue" class="binding-issue">
+            {{ bindingIssue }}<RouterLink to="/work/chat">新建会话</RouterLink>后可继续工作。
           </div>
           <form v-else class="composer" @submit.prevent="send">
             <div v-if="contextLabel || attachedFiles.length" class="attachments">
-              <button v-if="contextLabel" class="file-chip remove-file" type="button" aria-label="移除引用上下文" @click="removeContext">
-                <el-icon><Paperclip /></el-icon>{{ contextLabel }}<span aria-hidden="true">×</span>
+              <button v-if="contextLabel" class="file-chip" type="button" aria-label="移除引用上下文" @click="removeContext">
+                <Paperclip :size="14" aria-hidden="true" />{{ contextLabel }}<X :size="13" aria-hidden="true" />
               </button>
-              <button v-for="file in attachedFiles" :key="file.id" type="button" class="file-chip remove-file"
+              <button v-for="file in attachedFiles" :key="file.id" type="button" class="file-chip"
                 :aria-label="'移除引用 ' + file.name" @click="toggleFile(file.id)">
-                <el-icon><Document /></el-icon>{{ file.name }}<span aria-hidden="true">×</span>
+                <FileText :size="14" aria-hidden="true" />{{ file.name }}<X :size="13" aria-hidden="true" />
               </button>
             </div>
-            <textarea ref="composer" v-model="draft"
-              :placeholder="conversation ? '继续补充你的要求…' : automationMode ? '输入执行时间和任务内容…' : '输入你想完成的工作…'"
-              aria-label="工作内容" rows="2" @keydown.enter="handleEnter"></textarea>
-            <div class="composer-controls">
-              <div class="composer-options">
-                <el-select v-if="!conversation" v-model="selectedAssistant" aria-label="选择助理" class="assistant-select">
-                  <el-option-group v-for="group in assistantGroups" :key="group.label" :label="group.label">
-                    <el-option v-for="assistant in group.assistants" :key="assistant.id" :value="assistant.id" :label="assistantLabel(assistant)" />
-                  </el-option-group>
-                </el-select>
-                <span v-else class="composer-assistant"><el-icon><Star /></el-icon>{{ activeAssistant?.name ?? '个人助理' }}</span>
-                <el-popover placement="top-start" :width="260" trigger="click">
-                  <template #reference>
-                    <button class="attach-button" type="button"><el-icon><Paperclip /></el-icon><span>引用文件</span></button>
+            <textarea ref="composer" v-model="draft" rows="1" aria-label="工作内容"
+              :placeholder="automationMode ? '输入执行时间和任务内容…' : '给助理发消息，输入 @ 引用文件'"
+              @input="updateMention" @compositionend="updateMention" @keydown.enter="handleEnter"
+              @keydown.down="navigateReferences($event, 1)" @keydown.up="navigateReferences($event, -1)"></textarea>
+            <p v-if="bindingIssue" class="binding-issue" role="status">{{ bindingIssue }}请重新选择。</p>
+            <div ref="composerToolbar" class="composer-toolbar">
+              <el-popover :visible="referenceMenuOpen" placement="top-start" :width="310" :teleported="false">
+                <template #reference>
+                  <button class="attach-button" type="button" aria-label="引用文件和工作示例" :aria-expanded="referenceMenuOpen"
+                    title="引用文件和工作示例"
+                    @click="referenceMenuOpen ? closeReferences() : referenceMenuOpen = true">
+                    <Plus :size="18" aria-hidden="true" />
+                  </button>
+                </template>
+                <div class="attach-list">
+                  <el-input v-if="!mention" v-model="referenceFilter" aria-label="搜索工作目录文件" placeholder="搜索工作目录文件" clearable />
+                  <strong v-if="matchingReferences.length">{{ activeDirectory?.label }}</strong>
+                  <button v-for="(file, index) in matchingReferences" :id="'conversation-reference-' + index"
+                    :key="file.id" class="attach-item" :class="{ 'keyboard-current': mention && index === referenceIndex }" type="button"
+                    :aria-pressed="attachedIds.includes(file.id)" @click="chooseReference(file.id)">
+                    <component :is="attachedIds.includes(file.id) ? Check : FileText" :size="15" aria-hidden="true" />
+                    <span>{{ file.name }}</span>
+                  </button>
+                  <p v-if="activeDirectory && !directoryFiles.length" class="muted">暂无文件。<RouterLink :to="workspaceLocation">打开工作目录</RouterLink></p>
+                  <p v-else-if="!matchingReferences.length" class="muted">没有匹配的文件</p>
+                  <template v-if="!mention && !conversation && !referenceFilter">
+                    <strong>工作示例</strong>
+                    <button v-for="example in automationMode ? automationExamples : examples" :key="example.title" class="attach-item"
+                      type="button" @click="fillDraft(example.text)">{{ example.title }}</button>
                   </template>
-                  <div class="attach-list">
-                    <strong>个人工作空间</strong>
-                    <button v-for="file in platform.myFiles" :key="file.id" class="attach-item" type="button"
-                      :aria-pressed="attachedIds.includes(file.id)" @click="toggleFile(file.id)">
-                      <el-icon><component :is="attachedIds.includes(file.id) ? CircleCheck : Files" /></el-icon>
-                      <span>{{ file.name }}</span>
-                    </button>
-                    <p v-if="!platform.myFiles.length" class="muted">暂无文件。<router-link to="/work/workspace">前往工作空间上传</router-link></p>
-                  </div>
-                </el-popover>
-              </div>
-              <button type="submit" class="send-button" aria-label="发送消息" :disabled="!draft.trim() || !!pendingId"><el-icon><ArrowUp /></el-icon></button>
+                </div>
+              </el-popover>
+              <button type="submit" class="send-button" aria-label="发送消息" :aria-busy="!!pendingId"
+                :disabled="!draft.trim() || !!pendingId || !!bindingIssue">
+                <component :is="pendingId ? LoaderCircle : ArrowUp" :size="18" aria-hidden="true" />
+              </button>
             </div>
           </form>
         </section>
-
-        <section v-if="!conversation" class="examples" aria-label="工作示例">
-          <button v-for="example in automationMode ? automationExamples : examples" :key="example.title" type="button" @click="fillDraft(example.text)">
-            <el-icon><component :is="example.icon" /></el-icon>
-            {{ example.title }}
-            <el-icon class="example-arrow"><ArrowRight /></el-icon>
-          </button>
-        </section>
       </div>
     </div>
-    <ConversationRightSidebar
-      v-show="sidebarLayout.open"
-      :key="sidebarSession"
-      ref="rightSidebar"
-      class="conversation-sidebar"
-      :layout="sidebarLayout"
-      :conversation="conversation"
-      :expanded="sidebarExpanded"
-      @update:layout="updateSidebarLayout"
-      @close="toggleSidebar"
-      @expand="sidebarExpanded = !sidebarExpanded"
-      @reference="addSidebarReference"
-      @edit-artifact="openArtifact"
-    />
-    <ConversationArtifactDialog
-      v-if="conversation"
-      v-model="artifactOpen"
-      :conversation-id="conversation.id"
-      :message="artifact"
-    />
+    <ConversationRightSidebar v-show="sidebarLayout.open" :key="sidebarSession" ref="rightSidebar" class="conversation-sidebar"
+      :layout="sidebarLayout" :conversation="conversation" :directory="activeDirectory" :expanded="sidebarExpanded"
+      @update:layout="updateSidebarLayout" @close="toggleSidebar" @expand="sidebarExpanded = !sidebarExpanded"
+      @reference="addSidebarReference" @edit-artifact="openArtifact" />
+    <ConversationArtifactDialog v-if="conversation" v-model="artifactOpen" :conversation-id="conversation.id" :message="artifact" :directory="activeDirectory" />
   </div>
 </template>
 
 <style scoped>
-.conversation-layout { display: grid; grid-template-columns: minmax(0, 1fr); }
+.conversation-layout { height: 100%; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); }
 .conversation-layout.has-sidebar:not(.sidebar-expanded) { grid-template-columns: minmax(0, 1fr) clamp(300px, 36%, 460px); }
-.conversation-main { display: flex; flex-direction: column; min-width: 0; }
-.sidebar-control { position: sticky; top: 0; z-index: 2; display: flex; justify-content: flex-end; height: 0; }
-.sidebar-toggle {
-  flex: none;
-  width: 30px;
-  height: 30px;
-  padding: 0;
-  color: var(--muted);
-  margin: 6px 6px 0 0;
+.conversation-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; container-type: inline-size; }
+.conversation-sidebar { min-height: 0; border-inline-start: 1px solid var(--line); }
+.sidebar-expanded .conversation-sidebar { position: fixed; inset: 0; z-index: 22; border: 0; }
+.conversation-header {
+  display: flex; align-items: center; flex: none; gap: 10px; justify-content: space-between;
+  min-height: 44px; padding: 5px 16px; border-bottom: 1px solid var(--line);
+}
+.conversation-header.is-blank { justify-content: flex-end; border-bottom: 0; }
+.session-heading { display: flex; flex: 1; align-items: center; gap: 14px; min-width: 0; }
+.session-heading h1 {
+  min-width: 0; max-width: 50%; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 15px; line-height: 20px; font-weight: 650;
+}
+.session-bindings { display: flex; align-items: center; gap: 12px; min-width: 0; color: var(--muted); font-size: 12px; }
+.session-bindings > span { display: inline-flex; align-items: center; gap: 5px; min-width: 0; }
+.session-bindings svg { flex: none; }
+.session-bindings > span > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-toggle { display: grid; flex: none; place-items: center; width: 32px; height: 32px; color: var(--muted); }
+
+.conversation-page {
+  --reply-width: clamp(680px, 64cqi, 920px);
+  --composer-width: calc(var(--reply-width) + 32px);
+  --composer-gutter: 16px;
+  display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0;
+  overflow: auto; color: var(--text); scrollbar-gutter: stable both-edges; overscroll-behavior: contain;
+}
+.conversation-page:not(.with-thread) { padding-block: 16px 48px; }
+.welcome { display: flex; align-items: center; justify-content: center; gap: 10px; margin: auto 12px 16px; color: var(--text); }
+.welcome svg { flex: none; color: var(--text-secondary); }
+.welcome h1 { margin: 0; font-size: clamp(26px, 4vw, 32px); font-weight: 550; line-height: 1.3; }
+.conversation-page:not(.with-thread) .composer-section { margin-bottom: auto; }
+.conversation-page.is-new-chat { --composer-width: 760px; padding-block: clamp(32px, 11dvh, 104px) 24px; }
+.is-new-chat .welcome {
+  flex: none; justify-content: flex-start;
+  width: min(var(--composer-width), calc(100% - 2 * var(--composer-gutter)));
+  margin: 0 auto 18px;
+}
+.is-new-chat .welcome h1 { font-size: clamp(28px, 4.2cqi, 36px); line-height: 1.2; }
+
+.thread { flex: 1 0 auto; width: min(var(--reply-width), calc(100% - 2 * var(--composer-gutter) - 32px)); margin-inline: auto; padding: 20px 0 12px; }
+.message { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-bottom: 22px; }
+.message-body { min-width: 0; max-width: 100%; }
+.is-user { align-items: flex-end; }
+.is-user .message-body { max-width: 75%; padding: 9px 13px; border-radius: 12px; background: var(--surface-muted); }
+.message-text { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.7; font-size: 15px; }
+.assistant-response { font-size: 15px; }
+.message-actions { display: flex; align-items: center; gap: 7px; min-height: 28px; color: var(--muted); font-size: 11px; }
+.message-actions button { display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 6px; background: transparent; color: inherit; }
+.message-actions button:hover { background: var(--surface-hover); color: var(--text); }
+@media (hover: hover) {
+  .message:not(:last-child) .message-actions { opacity: 0; }
+  .message:is(:hover, :focus-within) .message-actions { opacity: 1; }
+}
+.artifact-card {
+  display: flex; align-items: center; gap: 6px; width: min(100%, 370px); min-width: min(280px, 100%); margin-top: 12px;
+  padding: 4px; border: 1px solid var(--line); border-radius: var(--radius-surface); background: var(--surface);
+}
+.artifact-preview, .artifact-edit {
+  border: 0; border-radius: 8px; background: transparent; color: var(--text); text-align: start;
+}
+.artifact-preview { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; padding: 5px; }
+.artifact-preview:hover, .artifact-edit:hover { background: var(--surface-hover); }
+.artifact-icon { display: grid; flex: none; width: 36px; height: 36px; place-items: center; border-radius: var(--radius-surface); background: var(--surface-muted); color: var(--text-secondary); }
+.artifact-details { display: grid; gap: 3px; min-width: 0; }
+.artifact-details > * { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.artifact-details strong { font-size: 13px; font-weight: 600; }
+.artifact-details small, .artifact-edit { color: var(--muted); font-size: 12px; }
+.artifact-edit { flex: none; padding: 7px 5px; }
+.automation-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 8px; color: var(--accent); font-size: 13px; }
+.reply-status { display: flex; align-items: center; gap: 7px; min-height: 28px; color: var(--muted); font-size: 13px; }
+.reply-status svg, .send-button[aria-busy='true'] svg { animation: spin 1.2s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.composer-section { position: relative; flex: none; min-width: 0; padding-inline: var(--composer-gutter); }
+.with-thread .composer-section {
+  position: sticky; z-index: 3; bottom: 0; padding-block: 22px 12px;
+  background: linear-gradient(transparent, var(--canvas) 32px);
+}
+.composer, .composer-bindings, .composer-section > .binding-issue { width: min(100%, var(--composer-width)); margin-inline: auto; }
+.composer-bindings { display: flex; align-items: center; gap: 7px; margin-bottom: 8px; }
+.composer-bindings :deep(.el-select__wrapper) {
+  min-height: 29px; padding-inline: 8px; border-radius: var(--radius-pill); box-shadow: none; background: var(--surface-muted); font-size: 12px;
+}
+.composer-bindings :deep(.el-select__wrapper.is-hovering) { box-shadow: 0 0 0 1px var(--line-strong) inset; }
+.composer-bindings :deep(.el-select__wrapper.is-focused) { box-shadow: 0 0 0 1px var(--accent) inset; }
+.assistant-select { flex: 0 1 140px; min-width: 0; }
+.directory-select { flex: 0 1 220px; min-width: 0; }
+:global(.conversation-binding-options .el-select-dropdown__item) { max-width: min(460px, calc(100vw - 24px)); }
+.composer {
+  position: relative; padding: 8px 8px 6px; border: 1px solid var(--line-strong); border-radius: 12px;
   background: var(--surface);
 }
-.conversation-sidebar {
-  position: sticky;
-  top: 0;
-  height: calc(var(--shell-body-height, 100dvh) - var(--content-padding-top) - var(--content-padding-bottom) - 2px);
-  align-self: start;
-  border-inline-start: 1px solid var(--line);
+.composer:focus-within { border-color: var(--accent); }
+.composer textarea {
+  display: block; field-sizing: content; width: 100%; min-height: 38px; max-height: min(34dvh, 336px); padding: 5px 7px;
+  border: 0; outline: none; resize: none; background: transparent; color: var(--text); font: inherit; font-size: 14px; line-height: 24px;
 }
-.sidebar-expanded .conversation-sidebar { position: fixed; inset: 0; z-index: 22; height: auto; border: 0; }
-.conversation-page {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  width: 100%;
-  min-height: 0;
-  max-width: 860px;
-  margin-inline: auto;
-  color: var(--text);
-}
-.welcome { margin-top: auto; margin-bottom: 30px; text-align: center; }
-.assistant-mark { display: grid; place-items: center; width: 50px; height: 50px; margin: 0 auto 19px; color: var(--accent); background: #edf2ff; border: 1px solid #dbe5ff; border-radius: 17px; box-shadow: 0 5px 15px #2647af0c; }
-.assistant-mark .el-icon { font-size: 25px; transform: rotate(-12deg); }
-.welcome h1 { margin: 0; font-size: clamp(25px, 4vw, 36px); font-weight: 650; letter-spacing: -.045em; line-height: 1.35; }
-.welcome p { margin: 10px 0 0; color: var(--muted); font-size: 14px; }
-.composer-section { position: relative; }
-.assistant-unavailable { padding: 12px 14px; color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: 9px; }
-.assistant-unavailable a { color: var(--accent); }
-.composer { padding: 14px; background: var(--surface); border: 1px solid var(--line); border-radius: 17px; box-shadow: 0 10px 30px #1829430a; }
-.composer:focus-within { border-color: #9fb1ed; }
-.composer textarea { display: block; width: 100%; border: 0; outline: none; resize: vertical; min-height: 62px; max-height: 240px; padding: 6px; color: var(--text); background: transparent; font: inherit; line-height: 1.6; }
+.conversation-page:not(.with-thread) textarea { min-height: 57px; }
 .composer textarea::placeholder { color: var(--muted); }
-.composer-controls, .composer-options, .composer-assistant, .attach-button { display: flex; align-items: center; gap: 9px; }
-.composer-controls { justify-content: space-between; }
-.assistant-select { width: 146px; min-width: 0; }
-.composer-options { min-width: 0; }
-.attach-button, .composer-assistant { border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 13px; padding: 8px; border-radius: 7px; white-space: nowrap; }
-.attach-button:hover, .attach-button:focus-visible { background: var(--soft); color: var(--accent); cursor: pointer; }
-.send-button { display: grid; place-items: center; flex-shrink: 0; width: 35px; height: 35px; color: #fff; background: var(--accent); border: none; border-radius: 10px; font-size: 20px; cursor: pointer; }
-.send-button:disabled { opacity: .4; cursor: default; }
-.attachments, .message-references { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 5px; }
-.file-chip, .message-references > * { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; overflow-wrap: anywhere; padding: 4px 8px; border: 1px solid var(--line); border-radius: 7px; background: var(--soft); color: var(--muted); font-size: 12px; text-align: left; }
-.message-references button:hover { color: var(--accent); border-color: #c7d5ff; }
-.remove-file { cursor: pointer; }
-.attach-list { max-height: 280px; overflow: auto; }
-.attach-list strong { display: block; margin: 3px 4px 8px; }
-.attach-item { width: 100%; display: flex; align-items: center; gap: 8px; border: 0; padding: 7px; border-radius: 7px; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
-.attach-item:hover, .attach-item[aria-pressed="true"] { background: var(--soft); color: var(--accent); }
-.examples { display: flex; flex-wrap: wrap; justify-content: center; gap: 9px; margin-top: 16px; margin-bottom: auto; }
-.examples button { display: flex; align-items: center; gap: 8px; padding: 9px 13px; color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 9px; cursor: pointer; font: inherit; font-size: 13px; }
-.examples button > .el-icon:first-child { color: var(--accent); }
-.examples button:hover { border-color: #aebff1; background: #f6f8ff; }
-.example-arrow { color: var(--muted); margin-left: 1px; }
-.thread { flex: 1; padding: 16px 0 12px; }
-.message { display: flex; gap: 10px; margin-bottom: 19px; }
-.message-body { min-width: 0; max-width: min(85%, 700px); }
-.message-avatar { display: grid; place-items: center; flex: 0 0 29px; height: 29px; color: var(--accent); background: #edf2ff; border-radius: 8px; }
-.message-author { margin: 1px 0 6px; font-weight: 650; font-size: 13px; }
-.message-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.72; font-size: 14px; }
-.is-user { justify-content: flex-end; }
-.is-user .message-body { background: #eef2ff; padding: 10px 14px; border-radius: 12px 12px 3px 12px; }
-.message-references { margin-top: 8px; margin-bottom: 0; }
-.artifact { display: inline-flex; align-items: center; gap: 9px; padding: 9px 11px; margin-top: 11px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); cursor: pointer; font: inherit; font-size: 13px; text-align: left; }
-.artifact strong { color: var(--accent); font-size: 12px; white-space: nowrap; }
-.reply-status { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 13px; margin: 7px 0 16px; }
-.reply-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: pulse 1.4s infinite; }
-.thread-end { scroll-margin-bottom: 148px; }
-.with-thread .composer-section { position: sticky; bottom: 0; padding: 9px 0 5px; background: var(--surface); }
-@keyframes pulse { 50% { opacity: .35; } }
+.composer-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 9px; }
+.attach-button, .send-button, .latest-button { display: grid; flex: none; place-items: center; border: 0; border-radius: 50%; }
+.attach-button { width: 30px; height: 30px; background: var(--surface-muted); color: var(--text); }
+.attach-button:is(:hover, [aria-expanded='true']) { background: var(--surface-hover); }
+.send-button { width: 34px; height: 34px; background: var(--accent); color: var(--on-accent); }
+.send-button:enabled:hover { background: var(--accent-hover); }
+.send-button:disabled { background: var(--surface-hover); color: var(--muted); }
+.latest-button {
+  position: absolute; z-index: 1; inset: -11px auto auto 50%; translate: -50% 0; width: 30px; height: 30px;
+  border: 1px solid var(--line); background: var(--surface); color: var(--text-secondary);
+}
+.binding-issue { padding: 10px; color: var(--muted); background: var(--surface); border: 1px solid var(--line); border-radius: 9px; }
+.binding-issue a { color: var(--accent); margin-inline: 4px; }
+.archived-conversation { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; }
+.archived-conversation button { padding: 2px 4px; border: 0; background: transparent; color: var(--accent); }
+.composer .binding-issue { margin: 0 0 5px; padding: 3px 7px; border: 0; font-size: 12px; }
+
+.attachments, .message-references { display: flex; flex-wrap: wrap; gap: 6px; margin: 2px 0 5px; }
+.file-chip, .message-references > * {
+  display: inline-flex; align-items: center; gap: 5px; max-width: 100%; min-width: 0; overflow-wrap: anywhere;
+  padding: 5px 7px; border: 1px solid var(--line); border-radius: var(--radius-surface); background: var(--surface-muted); color: var(--muted); font-size: 12px; text-align: start;
+}
+.file-chip svg, .message-references svg { flex: none; }
+.file-chip:hover, .message-references button:hover { color: var(--accent); }
+.attach-list { max-height: min(40dvh, 310px); overflow: auto; }
+.composer-toolbar :deep(.el-popover.el-popper) { max-width: min(310px, calc(100vw - 26px)); }
+.attach-list strong { display: block; margin: 8px 3px 4px; color: var(--muted); font-size: 12px; font-weight: 600; }
+.attach-list p { margin: 8px 3px; font-size: 12px; }
+.attach-list a { color: var(--accent); }
+.attach-item {
+  width: 100%; display: flex; align-items: center; gap: 7px; padding: 7px 5px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--text); text-align: start; font-size: 13px;
+}
+.attach-item svg { flex: none; }
+.attach-item span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.attach-item:is(:hover, :focus-visible, .keyboard-current, [aria-pressed='true']) { background: var(--soft); color: var(--accent); }
+
 @media (max-width: 900px) {
   .conversation-layout.has-sidebar:not(.sidebar-expanded) { grid-template-columns: minmax(0, 1fr); }
-  .conversation-sidebar { position: fixed; inset: 0; z-index: 22; height: auto; border: 0; }
+  .conversation-sidebar { position: fixed; inset: 0; z-index: 22; border: 0; }
 }
-@media (max-width: 560px) {
-  .welcome { margin-bottom: 22px; }
-  .composer { padding: 11px; }
-  .assistant-select { width: 123px; }
-  .composer-assistant { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
-  .composer-assistant > .el-icon { flex-shrink: 0; }
-  .attach-button { padding-inline: 4px; }
-  .examples { gap: 6px; }
-  .examples button { padding-inline: 9px; }
-  .example-arrow { display: none; }
+@container (max-width: 560px) {
+  .conversation-header { padding-inline: 10px; }
+  .session-heading, .session-bindings { gap: 8px; }
+  .session-heading h1 { max-width: 42%; }
+  .conversation-page { --composer-gutter: 7px; }
+  .conversation-page.is-new-chat { --composer-gutter: 12px; padding-block-start: clamp(32px, 7dvh, 64px); }
+  .thread { width: calc(100% - 24px); padding-top: 12px; }
+  .is-user .message-body { max-width: 88%; }
 }
+@media (pointer: coarse) { .composer textarea { font-size: 16px; } }
+@media (prefers-reduced-motion: reduce) { .reply-status svg, .send-button svg { animation: none; } }
 </style>

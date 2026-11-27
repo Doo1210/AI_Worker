@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PageHeader from '@/components/PageHeader.vue'
 import { computed, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ArrowLeft, ArrowUpRight, CheckCircle2, FileText } from 'lucide-vue-next'
@@ -71,14 +72,16 @@ function retry() {
 </script>
 
 <template>
-  <section class="page page-surface scenario-task-page" :aria-label="task?.title ?? '任务详情'">
-    <header class="page-controls page-toolbar page-tab-toolbar">
-      <RouterLink :to="listLink" class="scenario-link"><ArrowLeft :size="15" aria-hidden="true" />{{ listLabel }}</RouterLink>
-      <div v-if="threadLink || objectLink" class="page-toolbar-controls scenario-navigation-actions">
+  <section class="page page-surface page-with-control-inset scenario-task-page" :aria-label="task?.title ?? '任务详情'">
+    <PageHeader :title="task?.title ?? '任务详情'">
+      <template #back>
+        <RouterLink :to="listLink" class="scenario-link"><ArrowLeft :size="15" aria-hidden="true" />{{ listLabel }}</RouterLink>
+      </template>
+      <template v-if="threadLink || objectLink" #actions>
         <RouterLink v-if="threadLink" :to="threadLink" class="el-button">查看原沟通</RouterLink>
         <RouterLink v-if="objectLink" :to="objectLink" class="el-button">打开业务记录 <ArrowUpRight :size="15" aria-hidden="true" /></RouterLink>
-      </div>
-    </header>
+      </template>
+    </PageHeader>
 
     <template v-if="task && definition">
       <div class="page-body scenario-task-layout">
@@ -170,7 +173,7 @@ function retry() {
 .scenario-link { display: inline-flex; gap: 5px; align-items: center; color: var(--accent); }
 .scenario-panel-heading { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 12px; }
 .scenario-links { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.scenario-links :deep(.el-button), .scenario-navigation-actions .el-button { margin-left: 0; gap: 4px; }
+.scenario-links :deep(.el-button), .page-controls .el-button { margin-left: 0; gap: 4px; }
 .scenario-status { padding: 4px 8px; border-radius: 5px; background: var(--soft); color: var(--accent); font-size: 12px; white-space: nowrap; }
 .scenario-status.review, .scenario-status.returned, .scenario-status.blocked { background: #fff1dc; color: #825012; }
 .scenario-status.completed { background: #e9f5ed; color: #246744; }

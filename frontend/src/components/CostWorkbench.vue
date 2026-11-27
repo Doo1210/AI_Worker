@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import PageHeader from '@/components/PageHeader.vue'
+import { recordWorkbenchOperation } from '@/workbenchUsage'
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { ArrowLeft, ArrowUpRight, Box, Calculator, ChevronDown, ClipboardList, Download, FolderClosed, LayoutDashboard, Paperclip, Plus, Search, Sparkles, Upload, X } from 'lucide-vue-next'
 import { ElMessage } from 'element-plus'
@@ -7,6 +9,8 @@ import CostModelPreview from '@/components/CostModelPreview.vue'
 import WorkbenchAssistantSelect from '@/components/WorkbenchAssistantSelect.vue'
 import { calculateLineAmount, formatCny, ledgerLabels, makeProject, projectStages, useConstructionCost, type CostBuilding, type CostEntry, type CostLedger } from '@/stores/constructionCost'
 import { useWorkbenchAssistant } from '@/workbenchAssistant'
+
+defineProps<{ pageTitle: string }>()
 
 type Section = 'projects' | 'overview' | 'archive' | 'model' | 'ledger' | 'calculator' | 'attachments'
 type Dialog = 'create' | 'rename' | 'building' | 'entry' | 'search'
@@ -122,6 +126,7 @@ function save() {
     return
   }
   savedSnapshot.value = JSON.stringify(projects.value)
+  recordWorkbenchOperation('workbench-cost', '保存造价台账')
   ElMessage.success('更改已保存')
 }
 
@@ -306,8 +311,21 @@ ${current.entries.filter(item => item.kind === 'change').map(item => `${item.tit
     </nav>
 
     <div class="cost-shell">
-      <header class="cost-toolbar page-toolbar">
-        <template v-if="project && section !== 'projects'">
+      <PageHeader :title="pageTitle">
+        <template #actions>
+          <template v-if="project && section !== 'projects'">
+            <button type="button" class="cost-ai-button" :aria-expanded="assistantOpen" @click="assistantOpen = !assistantOpen">
+              <Sparkles :size="17" aria-hidden="true" /> AI 助手
+            </button>
+            <button v-if="section === 'overview'" class="cost-button" type="button" @click="openProjectDialog('rename')">重命名</button>
+            <button v-else-if="section === 'model'" class="cost-button cost-primary" type="button" @click="openBuilding()"><Plus :size="15" aria-hidden="true" />添加楼栋</button>
+            <button v-else-if="section === 'ledger'" class="cost-button cost-primary" type="button" @click="openEntry()"><Plus :size="15" aria-hidden="true" />新增记录</button>
+            <button v-else-if="section === 'calculator'" class="cost-button" type="button" @click="openLedger('calculation')">计算记录 <ArrowUpRight :size="14" aria-hidden="true" /></button>
+            <button v-else-if="section === 'attachments'" class="cost-button cost-primary" type="button" :disabled="uploading" @click="attachmentInput?.click()"><Upload :size="15" aria-hidden="true" />上传附件</button>
+          </template>
+          <button v-else class="cost-button cost-primary" type="button" @click="openProjectDialog('create')"><Plus :size="15" aria-hidden="true" />新建项目</button>
+        </template>
+        <div v-if="project && section !== 'projects'" class="page-toolbar page-tab-toolbar">
           <div class="page-toolbar-filters">
             <div class="cost-crumbs">
               <button class="cost-home-link" type="button" @click="navigate('projects')"><ArrowLeft :size="14" aria-hidden="true" /> 返回首页</button>
@@ -324,21 +342,8 @@ ${current.entries.filter(item => item.kind === 'change').map(item => `${item.tit
               <Search :size="16" aria-hidden="true" /><span>搜索</span><kbd>⌘ K</kbd>
             </button>
           </div>
-          <div class="page-toolbar-controls">
-            <button type="button" class="cost-ai-button" :aria-expanded="assistantOpen" @click="assistantOpen = !assistantOpen">
-              <Sparkles :size="17" aria-hidden="true" /> AI 助手
-            </button>
-            <button v-if="section === 'overview'" class="cost-button" type="button" @click="openProjectDialog('rename')">重命名</button>
-            <button v-else-if="section === 'model'" class="cost-button cost-primary" type="button" @click="openBuilding()"><Plus :size="15" aria-hidden="true" />添加楼栋</button>
-            <button v-else-if="section === 'ledger'" class="cost-button cost-primary" type="button" @click="openEntry()"><Plus :size="15" aria-hidden="true" />新增记录</button>
-            <button v-else-if="section === 'calculator'" class="cost-button" type="button" @click="openLedger('calculation')">计算记录 <ArrowUpRight :size="14" aria-hidden="true" /></button>
-            <button v-else-if="section === 'attachments'" class="cost-button cost-primary" type="button" :disabled="uploading" @click="attachmentInput?.click()"><Upload :size="15" aria-hidden="true" />上传附件</button>
-          </div>
-        </template>
-        <div v-else class="page-toolbar-controls">
-          <button class="cost-button cost-primary" type="button" @click="openProjectDialog('create')"><Plus :size="15" aria-hidden="true" />新建项目</button>
         </div>
-      </header>
+      </PageHeader>
 
       <div class="cost-content" :class="{ 'has-assistant': assistantOpen && project && section !== 'projects' }">
         <div v-if="section === 'projects' || !project" class="cost-body cost-projects">

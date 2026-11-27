@@ -8,7 +8,7 @@ const emit = defineEmits<{ openVersion: [version: EtReviewVersion, indices?: num
 </script>
 
 <template>
-  <ElDrawer v-model="open" title="共享工作空间" size="min(500px, 100vw)" append-to-body destroy-on-close>
+  <ElDrawer v-model="open" title="共享空间" size="min(500px, 100vw)" append-to-body destroy-on-close>
     <EtReviewWorkspaceContent @open-version="(version, indices) => emit('openVersion', version, indices)" />
   </ElDrawer>
 </template>

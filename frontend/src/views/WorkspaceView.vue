@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, nextTick, ref, shallowRef, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ChatDotRound, Download, Search, Upload } from '@element-plus/icons-vue'
-import { ChevronRight, ClipboardCheck, Ellipsis, FileBox, FileImage, FileSpreadsheet, FileText, Folder, FolderInput, FolderOpen, FolderPlus, LayoutGrid, List, Pencil, Trash2, UsersRound, X } from 'lucide-vue-next'
+import { Download, Search, Upload } from '@element-plus/icons-vue'
+import {
+  ClipboardCheck, Download as DownloadIcon, Eye, FileBox, FileImage, FileSpreadsheet, FileText,
+  Folder, FolderInput, FolderOpen, FolderPlus, Pencil, Trash2, UsersRound, X,
+} from 'lucide-vue-next'
 import { ElMessage } from 'element-plus'
 import EtReviewFindings from '@/components/EtReviewFindings.vue'
 import SharedWorkspaceCards from '@/components/SharedWorkspaceCards.vue'
@@ -12,6 +15,7 @@ import { useEtDrawingReviewStore } from '@/stores/etDrawingReview'
 import { makeId, nowIso, usePlatformStore, type WorkspaceFile, type WorkspaceFolder } from '@/stores/platform'
 import { etWorkspaceId, isEtWorkspaceSystemFolder, useSharedWorkspacesStore, type SharedWorkspace, type SharedWorkspaceFile } from '@/stores/sharedWorkspaces'
 import { scenarioStatusLabels, useScenarioTaskStore } from '@/stores/scenarioTasks'
+import { fileCenterName, personalFilesName, sharedSpacesName } from '@/workspaceDirectory'
 
 const EtSharedDrawingPreview = defineAsyncComponent(() => import('@/components/EtSharedDrawingPreview.vue'))
 
@@ -24,9 +28,11 @@ const route = useRoute()
 const router = useRouter()
 const workspacePath = '/work/workspace'
 const sharedGroups = [
-  { id: 'created', name: '我创建的' },
-  { id: 'joined', name: '我加入的' },
+  { id: 'all', name: '全部空间' },
+  { id: 'created', name: '我创建的空间' },
+  { id: 'joined', name: '我加入的空间' },
 ] as const
+type SharedGroup = typeof sharedGroups[number]['id']
 const drawingVersions: EtReviewVersion[] = ['V1', 'V2']
 const sharedScope = computed(() => route.query.scope === 'shared')
 const selectedSpace = computed(() => route.query.space)
@@ -36,9 +42,8 @@ const isEtSpaceOpen = computed(() => currentSpace.value?.id === etWorkspaceId)
 const folderQuery = computed(() => sharedScope.value ? route.query.folder ?? route.query.section : route.query.folder)
 const isSharedList = computed(() => sharedScope.value && selectedSpace.value === undefined && folderQuery.value === undefined)
 const requestedGroup = computed(() => sharedGroups.find(group => group.id === route.query.group)?.id)
-const lastSharedGroup = ref<typeof sharedGroups[number]['id']>()
-const activeSharedGroup = computed(() => requestedGroup.value ?? lastSharedGroup.value
-  ?? (shared.workspaces.some(space => space.creatorId === platform.currentUser.id) ? 'created' : 'joined'))
+const lastSharedGroup = ref<SharedGroup>()
+const activeSharedGroup = computed(() => requestedGroup.value ?? lastSharedGroup.value ?? 'all')
 watch([sharedScope, activeSharedGroup], ([isShared, group]) => {
   if (isShared) lastSharedGroup.value = group
 }, { immediate: true })
@@ -68,7 +73,7 @@ type Entry = {
   subtitle?: string
   editableKind?: EntryKind
   open: () => void
-  action?: { label: string; run?: () => void }
+  action?: { label: string; icon: typeof Pencil }
 }
 type EditableEntry = Entry & { editableKind: EntryKind }
 const entryActions = [
@@ -85,9 +90,8 @@ const entryDialogOpen = computed({
 const renameName = ref('')
 const destinationFolderId = ref('')
 const entryError = ref('')
-const viewMode = ref<'list' | 'icons'>('list')
 const directorySearch = ref('')
-const sharedSearch = ref({ created: '', joined: '' })
+const sharedSearch = ref({ all: '', created: '', joined: '' })
 const search = computed({
   get: () => isSharedList.value ? sharedSearch.value[activeSharedGroup.value] : directorySearch.value,
   set: (keyword: string) => {
@@ -203,7 +207,6 @@ const personalEntries = computed<Entry[]>(() => {
       id: file.id, name: file.name, icon: file.type, type: typeLabels[file.type], date: file.updatedAt,
       editableKind: 'file' as const,
       size: file.size, source: sourceLabels[file.source], open: () => showFile(file),
-      action: { label: '引用', run: () => useInChat(file) },
     })),
   ]
 })
@@ -214,11 +217,11 @@ const etReferenceFiles = computed<Entry[]>(() => [
     date: version === 'V2' ? etReview.release?.publishedAt : undefined,
     source: version === 'V2' ? etReview.release ? '已发布' : '待发布' : '初始版本',
     open: () => openSharedDrawing(version),
-    action: { label: '打开' },
+    action: { label: '打开', icon: FolderOpen },
   })),
   {
     id: 'materials', name: '材料清单 V1.csv', icon: 'sheet', type: 'CSV 表格', source: '共享资料',
-    open: downloadEtReviewMaterials, action: { label: '下载' },
+    open: downloadEtReviewMaterials, action: { label: '下载', icon: DownloadIcon },
   },
 ])
 
@@ -231,14 +234,14 @@ function sampleEntriesIn(folderId?: string): Entry[] {
         id: item.id, name: '出图检查清单 · ' + item.version, icon: 'document', type: '评审清单',
         date: item.confirmedAt, source: item.authorName, subtitle: item.scope,
         open: () => { checklistId.value = item.id },
-        action: { label: '预览' },
+        action: { label: '预览', icon: Eye },
       }))
     case 'deliveries':
       return sharedTasks.value.map(task => ({
         id: task.id, name: task.title + ' · ' + task.objectVersion, icon: 'task', type: 'AI 员工任务',
         date: task.writtenAt ?? task.updatedAt, source: task.writtenAt ? '已写回' : scenarioStatusLabels[task.status],
         open: () => { void router.push({ name: 'scenario-task', params: { taskId: task.id } }) },
-        action: { label: '查看' },
+        action: { label: '查看', icon: Eye },
       }))
     default: return []
   }
@@ -255,14 +258,15 @@ const sharedEntries = computed<Entry[]>(() => {
       id: file.id, name: file.name, icon: file.type, type: typeLabels[file.type], date: file.updatedAt,
       editableKind: 'file' as const,
       size: file.size, source: platform.users.find(user => user.id === file.uploadedById)?.name ?? '共享上传',
-      open: () => showFile(file), action: { label: '预览' },
+      open: () => showFile(file),
     })),
   ]
 })
 
 const sharedCards = computed(() => {
+  const group = activeSharedGroup.value
   return shared.workspaces
-    .filter(space => (space.creatorId === platform.currentUser.id) === (activeSharedGroup.value === 'created'))
+    .filter(space => group === 'all' || (space.creatorId === platform.currentUser.id) === (group === 'created'))
     .map(space => {
       const isEt = space.id === etWorkspaceId
       const isOwner = shared.canManage(space.id)
@@ -274,7 +278,7 @@ const sharedCards = computed(() => {
       return {
         id: space.id, name: space.name, updatedAt, isOwner,
         ownerName: platform.users.find(user => user.id === space.creatorId)?.name ?? '未知成员',
-        permission: isOwner ? undefined : shared.canEdit(space.id) ? '可编辑' : '可查看',
+        permission: isOwner ? '可管理' : shared.canEdit(space.id) ? '可编辑' : '可查看',
         collaboratorCount: platform.users.filter(user => shared.canAccess(space.id, user.id)).length,
         fileCount: space.files.length + (isEt ? etReferenceFiles.value.length + etReview.confirmed.length : 0),
         to: spaceLocation(space.id),
@@ -293,10 +297,12 @@ const visibleCount = computed(() => isSharedList.value ? filteredCards.value.len
 const totalCount = computed(() => isSharedList.value ? sharedCards.value.length : directoryEntries.value.length)
 const emptyMessage = computed(() => {
   if (unavailableSpace.value) return '当前共享目录不可用'
-  if (searchKeyword.value) return isSharedList.value ? '没有找到匹配的共享工作空间' : '没有找到匹配的项目'
+  if (searchKeyword.value) return isSharedList.value ? '没有找到匹配的共享空间' : '没有找到匹配的项目'
   if (!sharedScope.value) return '此文件夹为空'
-  if (isSharedList.value) return activeSharedGroup.value === 'created'
-    ? '你还没有创建共享工作空间' : '你还没有加入共享工作空间'
+  if (isSharedList.value) {
+    if (activeSharedGroup.value === 'all') return '暂无共享空间'
+    return activeSharedGroup.value === 'created' ? '你还没有创建共享空间' : '你还没有加入共享空间'
+  }
   if (isEtSpaceOpen.value && currentFolderId.value === 'checklists') return '暂无已确认的检查清单'
   if (isEtSpaceOpen.value && currentFolderId.value === 'deliveries') return '暂无可查看的任务与交付结果'
   return '此文件夹为空'
@@ -325,19 +331,24 @@ watch(address, (element, _, onCleanup) => {
   onCleanup(() => observer.disconnect())
 })
 
-watch([() => route.query.file, currentFolderId, sharedScope], ([fileId, folderId, shared], [previousFileId]) => {
-  if (route.path !== workspacePath || shared) return
+watch([() => route.query.file, currentFolderId, sharedScope, () => currentSpace.value?.id], ([fileId, folderId, isShared], [previousFileId]) => {
+  if (route.path !== workspacePath) return
   if (typeof fileId !== 'string') {
     if (previousFileId === previewId.value) previewOpen.value = false
     return
   }
-  const file = platform.myFiles.find(item => item.id === fileId && item.folderId === folderId)
+  const files = isShared ? currentSpace.value?.files ?? [] : platform.myFiles
+  const file = files.find(item => item.id === fileId && item.folderId === folderId)
   if (file) showFile(file)
   else previewOpen.value = false
 }, { immediate: true })
 
 function revealCurrentFolder() {
   if (address.value) address.value.scrollLeft = address.value.scrollWidth
+}
+
+function selectSharedGroup(group: SharedGroup) {
+  void router.push({ path: workspacePath, query: { ...sharedLocation.value.query, group } })
 }
 
 function openFolder(id?: string) {
@@ -391,7 +402,7 @@ function submitSpaceAction() {
       }
       sharedSearch.value.created = ''
       void router.push({ path: workspacePath, query: { scope: 'shared', group: 'created' } })
-      ElMessage.success('共享工作空间已创建')
+      ElMessage.success('共享空间已创建')
       break
     case 'rename':
       if (!shared.renameWorkspace(action.spaceId, spaceName.value)) {
@@ -452,9 +463,8 @@ function canChangeEntry(entry: Entry): entry is EditableEntry {
   return canEditDirectory.value && !!entry.editableKind
 }
 
-function openEntryMutation(actionId: unknown, entry: Entry) {
-  const action = entryActions.find(item => item.id === actionId)
-  if (!action || !canChangeEntry(entry)) return
+function openEntryMutation(action: EntryAction, entry: Entry) {
+  if (!canChangeEntry(entry)) return
   renameName.value = entry.name
   destinationFolderId.value = currentFolderId.value ?? ''
   entryError.value = ''
@@ -580,14 +590,9 @@ function showFile(file: WorkspaceFile | SharedWorkspaceFile) {
 }
 
 function clearPreviewLocation() {
-  if (platform.currentUser.id === workspaceUserId && route.path === workspacePath && !sharedScope.value && route.query.file === previewId.value) {
+  if (platform.currentUser.id === workspaceUserId && route.path === workspacePath && route.query.file === previewId.value) {
     void router.replace({ path: route.path, query: { ...route.query, file: undefined } })
   }
-}
-
-function useInChat(file: WorkspaceFile) {
-  previewOpen.value = false
-  void router.push({ path: '/work/chat', query: { context: file.id } })
 }
 
 function download(file: WorkspaceFile | SharedWorkspaceFile) {
@@ -606,56 +611,53 @@ function displaySize(bytes: number) {
 </script>
 
 <template>
-  <section class="page-surface workspace-page" aria-label="工作空间">
+  <section class="page-surface page-with-control-inset workspace-page" aria-labelledby="workspace-title">
     <header class="page-controls workspace-toolbar" :class="{ 'is-searching': compactSearchOpen }">
-      <nav class="page-tabs" aria-label="工作空间切换">
+      <div class="page-title-row">
+        <h1 id="workspace-title">{{ fileCenterName }}</h1>
+      </div>
+      <nav class="page-tabs" :aria-label="`${fileCenterName}页签`">
         <RouterLink :to="sharedScope ? workspacePath : route.fullPath" custom v-slot="{ href, navigate }">
           <a class="page-tab" :href="href" :aria-current="!sharedScope ? 'page' : undefined" @click="navigate">
-            <FolderOpen :size="16" aria-hidden="true" />个人空间
+            <FolderOpen :size="16" aria-hidden="true" />{{ personalFilesName }}
           </a>
         </RouterLink>
         <RouterLink :to="sharedScope ? route.fullPath : sharedLocation" custom v-slot="{ href, navigate }">
           <a class="page-tab" :href="href" :aria-current="sharedScope ? 'page' : undefined" @click="navigate">
-            <UsersRound :size="16" aria-hidden="true" />共享空间
+            <UsersRound :size="16" aria-hidden="true" />{{ sharedSpacesName }}
+            <small class="shared-tab-count">{{ shared.workspaces.length }}</small>
           </a>
         </RouterLink>
       </nav>
       <div class="workspace-directory-toolbar page-tab-toolbar">
-        <nav v-if="isSharedList" class="workspace-group-nav page-segments" aria-label="共享工作空间分组">
-          <RouterLink v-for="group in sharedGroups" :key="group.id"
-            :to="{ ...sharedLocation, query: { ...sharedLocation.query, group: group.id } }" custom v-slot="{ href, navigate }">
-            <a class="page-segment" :href="href" :aria-current="activeSharedGroup === group.id ? 'page' : undefined" @click="navigate">{{ group.name }}</a>
-          </RouterLink>
-        </nav>
-        <nav v-else ref="address" class="folder-address" aria-label="当前文件目录">
-          <template v-if="sharedScope">
-            <RouterLink :to="sharedLocation" class="crumb"><UsersRound :size="15" aria-hidden="true" />共享工作空间</RouterLink>
-            <template v-if="currentSpace">
-              <ChevronRight :size="13" class="crumb-separator" aria-hidden="true" />
-              <button v-if="currentFolder" type="button" class="crumb" @click="openFolder()">{{ currentSpace.name }}</button>
-              <span v-else class="crumb current-crumb" aria-current="location">{{ currentSpace.name }}</span>
-              <template v-for="(folder, index) in breadcrumbs" :key="folder.id">
-                <ChevronRight :size="13" class="crumb-separator" aria-hidden="true" />
-                <span v-if="index === breadcrumbs.length - 1" class="crumb current-crumb" aria-current="location">{{ folder.name }}</span>
-                <button v-else type="button" class="crumb" @click="openFolder(folder.id)">{{ folder.name }}</button>
+        <el-select v-if="isSharedList" :model-value="activeSharedGroup" class="filter-field filter-select shared-scope-filter"
+          aria-label="参与方式" popper-class="filter-options" @update:model-value="selectSharedGroup">
+          <el-option v-for="group in sharedGroups" :key="group.id" :value="group.id" :label="group.name" />
+        </el-select>
+        <nav v-else class="folder-address" aria-label="当前文件目录">
+          <div ref="address" class="folder-path">
+            <template v-if="sharedScope">
+              <RouterLink :to="sharedLocation" class="crumb" aria-current-value="false">{{ sharedSpacesName }}</RouterLink>
+              <template v-if="currentSpace">
+                <span class="crumb-separator" aria-hidden="true">/</span>
+                <button v-if="currentFolder" type="button" class="crumb" :title="currentSpace.name" @click="openFolder()">{{ currentSpace.name }}</button>
+                <span v-else class="crumb current-crumb" :title="currentSpace.name" aria-current="location">{{ currentSpace.name }}</span>
               </template>
             </template>
-          </template>
-          <template v-else>
-            <button v-if="currentFolder" type="button" class="crumb" @click="openFolder()">
-              <FolderOpen :size="15" aria-hidden="true" />个人工作空间
-            </button>
-            <span v-else class="crumb current-crumb" aria-current="location"><FolderOpen :size="15" aria-hidden="true" />个人工作空间</span>
-            <template v-for="(folder, index) in breadcrumbs" :key="folder.id">
-              <ChevronRight :size="13" class="crumb-separator" aria-hidden="true" />
-              <span v-if="index === breadcrumbs.length - 1" class="crumb current-crumb" aria-current="location">{{ folder.name }}</span>
-              <button v-else type="button" class="crumb" @click="openFolder(folder.id)">{{ folder.name }}</button>
+            <template v-else>
+              <button v-if="currentFolder" type="button" class="crumb" @click="openFolder()">{{ personalFilesName }}</button>
+              <span v-else class="crumb current-crumb" aria-current="location">{{ personalFilesName }}</span>
             </template>
-          </template>
+            <template v-for="(folder, index) in breadcrumbs" :key="folder.id">
+              <span class="crumb-separator" aria-hidden="true">/</span>
+              <span v-if="index === breadcrumbs.length - 1" class="crumb current-crumb" :title="folder.name" aria-current="location">{{ folder.name }}</span>
+              <button v-else type="button" class="crumb" :title="folder.name" @click="openFolder(folder.id)">{{ folder.name }}</button>
+            </template>
+          </div>
         </nav>
         <el-input ref="searchInput" class="directory-search filter-field" v-model="search" :prefix-icon="Search"
-          :placeholder="isSharedList ? '搜索共享工作空间' : '搜索当前目录'"
-          :aria-label="isSharedList ? '搜索共享工作空间' : '搜索当前目录'"
+          :placeholder="isSharedList ? '搜索共享空间' : '搜索当前目录'"
+          :aria-label="isSharedList ? '搜索共享空间' : '搜索当前目录'"
           clearable @keydown.esc="compactSearchOpen && toggleCompactSearch()" />
         <button ref="searchToggle" type="button" class="icon-button compact-search-toggle"
           :class="{ 'has-filter': searchKeyword }"
@@ -664,37 +666,25 @@ function displaySize(bytes: number) {
           :aria-expanded="compactSearchOpen" @click="toggleCompactSearch">
           <component :is="compactSearchOpen ? X : Search" :size="16" aria-hidden="true" />
         </button>
-
-        <div class="page-toolbar-controls workspace-controls">
-          <div class="workspace-actions">
-            <el-button v-if="isSharedList" class="create-shared-space" type="primary" plain :icon="FolderPlus"
-              :aria-label="spaceActionTitles.create" :title="spaceActionTitles.create" @click="newSpace">{{ spaceActionTitles.create }}</el-button>
-            <template v-else-if="canEditDirectory">
-              <el-button :icon="FolderPlus" aria-label="新建文件夹" title="新建文件夹" @click="newFolder">新建文件夹</el-button>
-              <el-button text :icon="Upload" :loading="uploading" aria-label="上传文件" title="上传文件" @click="fileInput?.click()">上传文件</el-button>
-              <input ref="fileInput" type="file" multiple hidden
-                accept="image/*,.md,.txt,.json,.csv,.tsv,.xlsx,.xls,.ods,.pdf,.doc,.docx,.ppt,.pptx,.dxf" @change="upload" />
-            </template>
-            <span v-else-if="currentSpace && !unavailableSpace" class="workspace-permission">查看权限</span>
-          </div>
-          <div v-if="!isSharedList" class="view-switch page-segments" role="group" aria-label="显示方式">
-            <button class="page-segment" type="button" aria-label="列表" title="列表" :aria-pressed="viewMode === 'list'" @click="viewMode = 'list'">
-              <List :size="16" aria-hidden="true" /><span>列表</span>
-            </button>
-            <button class="page-segment" type="button" aria-label="图标" title="图标" :aria-pressed="viewMode === 'icons'" @click="viewMode = 'icons'">
-              <LayoutGrid :size="15" aria-hidden="true" /><span>图标</span>
-            </button>
-          </div>
+        <div class="page-toolbar-controls workspace-actions">
+          <el-button v-if="isSharedList" type="primary" :icon="FolderPlus" @click="newSpace">{{ spaceActionTitles.create }}</el-button>
+          <template v-else-if="canEditDirectory">
+            <el-button :icon="FolderPlus" @click="newFolder">新建文件夹</el-button>
+            <el-button :icon="Upload" :loading="uploading" @click="fileInput?.click()">上传文件</el-button>
+            <input ref="fileInput" type="file" multiple hidden
+              accept="image/*,.md,.txt,.json,.csv,.tsv,.xlsx,.xls,.ods,.pdf,.doc,.docx,.ppt,.pptx,.dxf" @change="upload" />
+          </template>
+          <span v-else-if="currentSpace && !unavailableSpace" class="workspace-permission">查看权限</span>
         </div>
       </div>
     </header>
 
     <SharedWorkspaceCards v-if="isSharedList && filteredCards.length" :cards="filteredCards" @action="openSpaceAction" />
-    <div v-else-if="!isSharedList && filteredEntries.length" :aria-label="sharedScope ? '共享目录' : '个人文件'">
-      <div :class="[viewMode === 'icons' ? 'file-grid' : 'file-table', { 'shared-files': sharedScope }]">
-        <div v-if="viewMode === 'list'" class="file-row file-head" aria-hidden="true">
+    <div v-else-if="!isSharedList && filteredEntries.length" class="workspace-directory" :aria-label="sharedScope ? '共享目录' : '个人文件'">
+      <div class="file-table" :class="{ 'shared-files': sharedScope }">
+        <div class="file-row file-head" aria-hidden="true">
           <span>名称</span><span class="file-date">修改日期</span><span class="file-type">类型</span>
-          <span v-if="!sharedScope" class="file-size">大小</span><span class="file-source">{{ sharedScope ? '共享信息' : '来源' }}</span><span>操作</span>
+          <span v-if="!sharedScope" class="file-size">大小</span><span class="file-source">{{ sharedScope ? '共享信息' : '来源' }}</span><span class="file-actions">操作</span>
         </div>
         <article v-for="entry in filteredEntries" :key="entry.icon + '-' + entry.id" class="file-row">
           <button type="button" class="file-name" :title="entry.name"
@@ -705,29 +695,22 @@ function displaySize(bytes: number) {
               <span v-if="entry.subtitle" class="file-subtitle">{{ entry.subtitle }}</span>
             </span>
           </button>
-          <template v-if="viewMode === 'list'">
-            <time v-if="entry.date" class="file-date" :datetime="entry.date">{{ modifiedDate.format(new Date(entry.date)) }}</time>
-            <span v-else class="file-date">—</span>
-            <span class="file-type">{{ entry.type }}</span>
-            <span v-if="!sharedScope" class="file-size">{{ entry.size !== undefined ? displaySize(entry.size) : '—' }}</span>
-            <span class="file-source">{{ entry.source || '—' }}</span>
-          </template>
-          <div v-if="viewMode === 'list' || canChangeEntry(entry)" class="file-actions">
-            <button v-if="viewMode === 'list' && entry.action" type="button" class="file-action"
-              :aria-label="entry.action.label === '引用' ? '引用' : entry.action.label + ' ' + entry.name"
-              @click="(entry.action.run ?? entry.open)()">{{ entry.action.label }}</button>
-            <el-dropdown v-if="canChangeEntry(entry)" trigger="click" placement="bottom-end" @command="openEntryMutation($event, entry)">
-              <button type="button" class="file-more" :aria-label="'更多操作：' + entry.name" title="更多操作">
-                <Ellipsis :size="17" aria-hidden="true" />
+          <time v-if="entry.date" class="file-date" :datetime="entry.date">{{ modifiedDate.format(new Date(entry.date)) }}</time>
+          <span v-else class="file-date">—</span>
+          <span class="file-type">{{ entry.type }}</span>
+          <span v-if="!sharedScope" class="file-size">{{ entry.size !== undefined ? displaySize(entry.size) : '—' }}</span>
+          <span class="file-source">{{ entry.source || '—' }}</span>
+          <div class="file-actions">
+            <button v-if="entry.action" type="button" class="icon-button file-action" :title="entry.action.label"
+              :aria-label="entry.action.label + ' ' + entry.name" @click="entry.open()">
+              <component :is="entry.action.icon" :size="16" aria-hidden="true" />
+            </button>
+            <template v-if="canChangeEntry(entry)">
+              <button v-for="action in entryActions" :key="action.id" type="button" class="icon-button file-action"
+                :title="action.label" :aria-label="action.label + ' ' + entry.name" @click="openEntryMutation(action, entry)">
+                <component :is="action.icon" :size="16" aria-hidden="true" />
               </button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item v-for="action in entryActions" :key="action.id" :command="action.id" :icon="action.icon">
-                    {{ action.label }}
-                  </el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
+            </template>
           </div>
         </article>
       </div>
@@ -735,7 +718,7 @@ function displaySize(bytes: number) {
     <div v-else class="empty">
       <span class="empty-icon"><FolderOpen :size="24" aria-hidden="true" /></span>
       <p>{{ emptyMessage }}</p>
-      <RouterLink v-if="unavailableSpace" :to="sharedLocation" class="empty-link">返回共享工作空间列表</RouterLink>
+      <RouterLink v-if="unavailableSpace" :to="sharedLocation" class="empty-link">返回共享空间列表</RouterLink>
     </div>
 
     <footer class="workspace-status" aria-live="polite">
@@ -797,7 +780,7 @@ function displaySize(bytes: number) {
           <label class="entry-dialog-field">
             <span>移动到</span>
             <select v-model="destinationFolderId" aria-label="目标文件夹" @change="entryError = ''">
-              <option value="">{{ currentSpace?.name ?? '个人工作空间' }}（根目录）</option>
+              <option value="">{{ currentSpace?.name ?? personalFilesName }}（根目录）</option>
               <option v-for="directory in moveDirectories" :key="directory.id" :value="directory.id">{{ directory.label }}</option>
             </select>
           </label>
@@ -838,10 +821,7 @@ function displaySize(bytes: number) {
           <p v-else class="muted">此文件可下载后查看。</p>
         </template>
         <template #footer>
-          <template v-if="preview">
-            <el-button :icon="Download" @click="download(preview)">下载</el-button>
-            <el-button v-if="personalPreview" type="primary" :icon="ChatDotRound" @click="useInChat(personalPreview)">在新会话中引用</el-button>
-          </template>
+          <el-button v-if="preview" :icon="Download" @click="download(preview)">下载</el-button>
         </template>
     </el-dialog>
 
@@ -868,41 +848,49 @@ function displaySize(bytes: number) {
 }
 .empty-icon {
   display: grid; flex: none; place-items: center; width: 42px; height: 42px;
-  border-radius: 8px; color: var(--accent); background: var(--soft);
+  border-radius: var(--radius-surface); color: var(--text-secondary); background: var(--surface-muted);
 }
 .workspace-toolbar {
   position: sticky; top: 0; z-index: 1;
 }
+.shared-tab-count { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .workspace-directory-toolbar {
   display: flex; align-items: center; gap: 6px; min-width: 0;
 }
 .folder-address {
-  display: flex; align-items: center; gap: 2px; min-width: 0; min-height: 32px; flex: 0 1 auto; max-width: min(380px, 48cqi);
-  overflow-x: auto; border: 1px solid var(--line); border-radius: 7px; padding: 2px 5px;
-  background: var(--surface); white-space: nowrap; scrollbar-width: thin;
+  display: flex; align-items: center; flex: 0 1 auto; min-width: 0; min-height: 32px;
+  max-width: min(480px, 55cqi); margin-inline-end: 8px; font-size: 13px;
 }
-.crumb { display: inline-flex; flex: none; align-items: center; gap: 5px; padding: 3px 6px; color: var(--muted); font-size: 13px; }
-button.crumb, a.crumb { border: 0; border-radius: 5px; background: transparent; }
-button.crumb:hover, a.crumb:hover { color: var(--accent); background: var(--soft); }
-button.crumb:focus-visible, a.crumb:focus-visible { outline-offset: 0; }
-.current-crumb { color: var(--text); font-weight: 600; }
-.crumb-separator { flex: none; color: #8994a8; }
+.folder-path {
+  display: flex; align-items: center; gap: 7px; min-width: 0; padding-block: 2px;
+  overflow-x: auto; white-space: nowrap; scrollbar-width: thin;
+}
+.crumb {
+  display: block; flex: none; max-width: 100%; padding: 0; overflow: hidden;
+  color: var(--accent); line-height: 28px; text-overflow: ellipsis;
+}
+button.crumb, a.crumb { border: 0; border-radius: 3px; background: transparent; }
+button.crumb:hover, a.crumb:hover { color: var(--accent-hover); text-decoration: underline; text-underline-offset: 3px; }
+button.crumb:focus-visible, a.crumb:focus-visible { outline-offset: -2px; }
+.current-crumb { color: var(--text); font-weight: 650; }
+.crumb-separator { flex: none; color: var(--muted); }
 .directory-search { flex: 0 1 clamp(132px, 19%, 240px); min-width: 0; }
 .compact-search-toggle { display: none; }
-.workspace-controls { flex: none; flex-wrap: nowrap; }
-.workspace-actions { display: flex; flex: none; align-items: center; gap: 3px; }
+.workspace-actions { flex: none; flex-wrap: nowrap; }
 .workspace-actions:empty { display: none; }
-.workspace-actions > .el-button { margin-left: 0; padding-inline: 8px; font-size: 13px; }
 .workspace-permission { padding-inline: 4px; color: var(--muted); font-size: 12px; white-space: nowrap; }
-.view-switch button { padding-inline: 7px; }
-.file-table { --file-columns: minmax(0, 1fr) 126px 94px 64px 104px 76px; }
-.file-table.shared-files { --file-columns: minmax(0, 1fr) 126px 94px 104px 76px; }
+.workspace-directory { padding: var(--page-body-start) var(--page-control-inline) 0; }
+.file-table {
+  --file-actions-width: 100px;
+  --file-columns: minmax(0, 1fr) 126px 94px 64px 104px var(--file-actions-width);
+}
+.file-table.shared-files { --file-columns: minmax(0, 1fr) 126px 94px 104px var(--file-actions-width); }
 .file-table .file-row {
   display: grid; grid-template-columns: var(--file-columns); align-items: center; gap: 10px;
-  min-height: 48px; padding-inline: 16px; border-bottom: 1px solid #eef1f6; font-size: 13px;
+  min-height: 48px; padding-inline: 8px; border-bottom: 1px solid var(--line); font-size: 13px;
 }
-.file-table .file-head { min-height: 31px; color: var(--muted); background: #fafbfe; border-color: var(--line); font-size: 12px; }
-.file-table article:hover, .file-table article:focus-within { background: #f4f7ff; }
+.file-table .file-head { min-height: 31px; color: var(--muted); background: var(--surface-muted); font-size: 12px; }
+.file-table article:hover, .file-table article:focus-within { background: var(--surface-muted); }
 .file-date, .file-type, .file-size, .file-source {
   min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted);
 }
@@ -914,7 +902,7 @@ button.crumb:focus-visible, a.crumb:focus-visible { outline-offset: 0; }
 .file-name:focus-visible { outline-offset: -1px; }
 .file-icon {
   display: grid; flex: none; place-items: center; width: 28px; height: 28px;
-  border-radius: 7px; color: #466392; background: #edf2fa;
+  border-radius: var(--radius-surface); color: var(--text-secondary); background: var(--surface-muted);
 }
 .file-icon > svg { width: 17px; height: 17px; stroke-width: 1.7; }
 .type-folder { color: #9a621a; background: #fff2d6; }
@@ -927,38 +915,12 @@ button.crumb:focus-visible, a.crumb:focus-visible { outline-offset: 0; }
 .file-name-text { display: grid; gap: 2px; min-width: 0; }
 .file-subtitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--muted); }
 .file-table .file-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.file-actions { display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
-.file-action {
-  min-height: 29px; padding: 3px 7px; border: 0; border-radius: 5px;
-  background: transparent; color: var(--accent); font-size: 12px; white-space: nowrap;
-}
-.file-action:hover { background: var(--soft); }
-.file-more {
-  display: grid; place-items: center; width: 28px; height: 29px; padding: 0;
-  border: 0; border-radius: 5px; color: var(--muted); background: transparent;
-}
-.file-more:hover, .file-more[aria-expanded="true"] { color: var(--accent); background: var(--soft); }
-.file-grid {
-  display: grid; grid-template-columns: repeat(auto-fill, minmax(min(108px, 100%), 124px)); gap: 8px;
-  padding: 14px 16px;
-}
-.file-grid .file-row { position: relative; min-width: 0; }
-.file-grid .file-actions { position: absolute; inset: 4px 3px auto auto; }
-.file-grid .file-name {
-  width: 100%; min-height: 99px; flex-direction: column; justify-content: flex-start; gap: 7px;
-  padding: 10px 6px; border: 1px solid transparent; border-radius: 8px; text-align: center; font-size: 13px;
-}
-.file-grid .file-name:hover, .file-grid .file-name:focus-visible { border-color: #d3e1fa; background: #f4f7ff; }
-.file-grid .file-icon { width: 40px; height: 40px; border-radius: 9px; }
-.file-grid .file-icon > svg { width: 25px; height: 25px; stroke-width: 1.5; }
-.file-grid .file-name-text { width: 100%; }
-.file-grid .file-label {
-  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2;
-  overflow: hidden; overflow-wrap: anywhere; line-height: 1.3;
-}
+.file-actions { display: flex; align-items: center; gap: 2px; }
+.file-head .file-actions { padding-inline-start: 8px; }
+.file-action { flex: none; width: 32px; height: 32px; padding: 0; }
 .workspace-status {
-  margin-top: auto; padding: 6px 16px; border-top: 1px solid var(--line);
-  background: #fafbfe; color: var(--muted); font-size: 12px;
+  margin-top: auto; padding: 6px var(--page-control-inline);
+  background: var(--surface-muted); color: var(--muted); font-size: 12px;
 }
 .folder-dialog-actions { display: flex; justify-content: flex-end; }
 .space-member-list {
@@ -979,24 +941,25 @@ button.crumb:focus-visible, a.crumb:focus-visible { outline-offset: 0; }
 .entry-dialog-name, .entry-delete-prompt { margin: 0 0 14px; overflow-wrap: anywhere; }
 .entry-delete-prompt p { margin: 0 0 5px; }
 .entry-dialog-error { margin: 0 0 12px; color: #a5342a; }
-.preview-content { max-height: 52vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid var(--line); border-radius: 9px; background: var(--soft); padding: 15px; font: inherit; line-height: 1.65; }
+.preview-content { max-height: 52vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; border: 1px solid var(--line); border-radius: var(--radius-surface); background: var(--surface-muted); padding: 15px; font: inherit; line-height: 1.65; }
 .preview-meta { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
 .preview-back { margin: 0 0 8px; }
 .preview-image { display: block; max-width: 100%; max-height: 52vh; margin: 0 auto; object-fit: contain; }
 .empty { display: grid; justify-items: center; padding: 45px 16px; color: var(--muted); }
 .empty p { margin: 9px 0 0; }
 .empty-link { color: var(--accent); margin-top: 8px; }
-@container (max-width: 760px) {
-  .workspace-toolbar { --page-control-inline: 8px; }
-  .workspace-actions > .el-button:not(.create-shared-space) { width: 30px; padding: 0; }
-  .workspace-actions :deep(.el-button:not(.create-shared-space) > span), .view-switch button span { display: none; }
-}
 @container (max-width: 710px) {
-  .file-table, .file-table.shared-files { --file-columns: minmax(0, 1fr) 118px 74px 85px 70px; }
+  .file-table, .file-table.shared-files { --file-columns: minmax(0, 1fr) 118px 74px 85px var(--file-actions-width); }
   .file-size { display: none; }
+}
+@container (max-width: 620px) {
+  .file-table, .file-table.shared-files { --file-columns: minmax(0, 1fr) 78px var(--file-actions-width); }
+  .file-date, .file-source { display: none; }
 }
 @container (max-width: 540px) {
   .workspace-directory-toolbar { gap: 5px; }
+  .folder-address { max-width: 100%; margin-inline-end: 0; }
+  .folder-path { gap: 4px; }
   .directory-search { display: none; }
   .compact-search-toggle {
     display: grid; flex: 0 0 30px; width: 30px; height: 30px;
@@ -1004,17 +967,17 @@ button.crumb:focus-visible, a.crumb:focus-visible { outline-offset: 0; }
   }
   .compact-search-toggle.has-filter { color: var(--accent); background: var(--soft); }
   .workspace-toolbar.is-searching .directory-search { display: inline-flex; flex: 1; }
-  .workspace-toolbar.is-searching :is(.folder-address, .workspace-group-nav, .workspace-controls) { display: none; }
-  .file-table, .file-table.shared-files { --file-columns: minmax(0, 1fr) 78px 68px; }
-  .file-date, .file-source { display: none; }
+  .workspace-toolbar.is-searching :is(.folder-address, .shared-scope-filter, .workspace-actions) { display: none; }
+}
+@container (max-width: 420px) {
+  .workspace-actions { gap: 4px; }
+  .workspace-actions > .el-button { padding-inline: 8px; font-size: 13px; }
+  .workspace-actions :deep(.el-button > .el-icon:not(.is-loading)) { display: none; }
+  .workspace-actions :deep(.el-button:not(.is-loading) > .el-icon + span) { margin-inline-start: 0; }
 }
 @container (max-width: 380px) {
-  .workspace-actions > .create-shared-space { width: 30px; padding: 0; }
-  .workspace-actions :deep(.create-shared-space > span) { display: none; }
-  .file-table .file-row, .workspace-status { padding-inline: 10px; }
-  .view-switch button { padding-inline: 6px; }
-  .file-table, .file-table.shared-files { --file-columns: minmax(0, 1fr) 68px; }
+  .folder-address { font-size: 12px; }
+  .file-table, .file-table.shared-files { --file-columns: minmax(0, 1fr) var(--file-actions-width); }
   .file-type { display: none; }
-  .file-grid { grid-template-columns: repeat(auto-fill, minmax(min(101px, 100%), 1fr)); padding: 10px; }
 }
 </style>

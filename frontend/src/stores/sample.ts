@@ -1,6 +1,6 @@
 import type { Assistant, Conversation, Employee, EmployeeThread, Message, PlatformState, Resource, Task, Workbench, WorkspaceFile, WorkspaceFolder } from './platform'
 import { makeScenarioWorkbenches } from './workbenchScenarios'
-import { makeAdminChanges, makeAdminConnections } from './organizationAdminData'
+import { makeAdminChanges, makeAdminConnections, makeAdminPlugins } from './organizationAdminData'
 import { makeOrganizationRoles } from './organizationRoles'
 
 const date = (day: number, time = '09:30:00') => `2026-11-${String(day).padStart(2, '0')}T${time}+08:00`
@@ -60,9 +60,9 @@ export function makeSampleState(): PlatformState {
   ]
 
   const conversations: Conversation[] = [
-    { id: 'chat-weekly', userId: 'lin', title: '整理本周产品工作进展', assistantId: 'assistant-report', createdAt: date(11), updatedAt: date(11, '09:46:00'), messages: [message('weekly-q', 'user', '帮我整理本周产品工作进展，按进展和下一步输出。'), message('weekly-a', 'assistant', report, { artifactName: '产品组工作周报.md' })] },
-    { id: 'chat-meeting', userId: 'lin', title: '提炼项目例会纪要', assistantId: 'default', createdAt: date(10), updatedAt: date(10, '15:20:00'), messages: [message('meeting-q', 'user', '请从例会记录中提炼会后行动项。', { references: ['file-meeting'] }), message('meeting-a', 'assistant', '需要跟进两项工作：\n\n1. 设计组补充评审清单。\n2. 售后组汇总工单并标记高频问题。\n\n可以为每项补充负责人及完成时间。', { artifactName: '例会行动项.md' })] },
-    { id: 'chat-check', userId: 'lin', title: '准备交付评审检查清单', assistantId: 'assistant-review', createdAt: date(8), updatedAt: date(8), messages: [message('check-q', 'user', '帮我整理交付评审前要检查的事项。'), message('check-a', 'assistant', '建议检查图纸版本、材料清单、变更记录、责任人和归档位置。', { artifactName: '交付评审检查清单.md' })] },
+    { id: 'chat-weekly', userId: 'lin', title: '整理本周产品工作进展', assistantId: 'assistant-report', createdAt: date(11), updatedAt: date(11, '09:46:00'), messages: [message('weekly-q', 'user', '帮我整理本周产品工作进展，按进展和下一步输出。'), message('weekly-a', 'assistant', report, { createdAt: date(11, '09:46:00'), artifactName: '产品组工作周报.md' })] },
+    { id: 'chat-meeting', userId: 'lin', title: '提炼项目例会纪要', assistantId: 'default', createdAt: date(10), updatedAt: date(10, '15:20:00'), messages: [message('meeting-q', 'user', '请从例会记录中提炼会后行动项。', { createdAt: date(10, '15:18:00'), references: ['file-meeting'] }), message('meeting-a', 'assistant', '需要跟进两项工作：\n\n1. 设计组补充评审清单。\n2. 售后组汇总工单并标记高频问题。\n\n可以为每项补充负责人及完成时间。', { createdAt: date(10, '15:20:00'), artifactName: '例会行动项.md' })] },
+    { id: 'chat-check', userId: 'lin', title: '准备交付评审检查清单', assistantId: 'assistant-review', createdAt: date(8), updatedAt: date(8), messages: [message('check-q', 'user', '帮我整理交付评审前要检查的事项。', { createdAt: date(8) }), message('check-a', 'assistant', '建议检查图纸版本、材料清单、变更记录、责任人和归档位置。', { createdAt: date(8), artifactName: '交付评审检查清单.md' })] },
   ]
 
   const employees: Employee[] = [
@@ -110,6 +110,7 @@ export function makeSampleState(): PlatformState {
     currentUserId: 'lin',
     assistantSharingVersion: 1,
     organizationConnections: makeAdminConnections(),
+    organizationPlugins: makeAdminPlugins(),
     organizationChanges: makeAdminChanges(),
     organizationRoles: makeOrganizationRoles(),
     organizationRoleAssignments: [],
@@ -120,7 +121,7 @@ export function makeSampleState(): PlatformState {
       { id: 'department-service', name: '客户服务', leaderId: 'song' },
     ],
     users: [
-      { id: 'lin', name: '林知远', role: 'admin', department: '产品与交付', departmentId: 'department-delivery', title: '组织管理员', initials: '林' },
+      { id: 'lin', name: '林知远', role: 'admin', department: '产品与交付', departmentId: 'department-delivery', title: '系统管理员', initials: '林' },
       { id: 'zhou', name: '周可欣', role: 'member', department: '客户服务', departmentId: 'department-service', title: '普通成员', initials: '周' },
       { id: 'song', name: '宋予安', role: 'member', department: '客户服务', departmentId: 'department-service', title: 'AI 员工负责人', initials: '宋' },
     ],

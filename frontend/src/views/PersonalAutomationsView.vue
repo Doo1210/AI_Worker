@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PageHeader from '@/components/PageHeader.vue'
 import { computed, nextTick, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Clock, Ellipsis, MessageSquare, Pencil, Plus, Search, X } from 'lucide-vue-next'
@@ -163,21 +164,11 @@ async function confirmRemoval(task?: PersonalAutomation) {
 </script>
 
 <template>
-  <section class="page-surface automation-page" aria-label="自动化任务">
+  <section class="page-surface page-with-control-inset automation-page" aria-label="自动化任务">
     <div class="automation-layout" :class="{ 'has-detail': selected }">
       <div class="automation-list-pane">
-        <header class="page-controls page-toolbar page-tab-toolbar">
-          <div class="page-segments automation-filters" role="group" aria-label="任务状态">
-            <button v-for="status in filters" :key="status" class="page-segment" type="button" :aria-pressed="filter === status"
-              @click="filter = status">{{ statuses[status] }}</button>
-          </div>
-          <div class="page-toolbar-filters automation-query">
-            <label class="automation-search filter-search">
-              <Search :size="15" aria-hidden="true" />
-              <input ref="searchField" v-model="query" type="search" placeholder="搜索任务" aria-label="搜索任务" />
-            </label>
-          </div>
-          <div class="page-toolbar-controls automation-toolbar-controls">
+        <PageHeader title="自动化任务">
+          <template #actions>
             <el-dropdown v-if="endedCount && filter !== 'active'" trigger="click" placement="bottom-end" @command="confirmRemoval()">
               <button class="icon-button" type="button" aria-label="任务列表更多操作" title="任务列表更多操作"><Ellipsis :size="18" /></button>
               <template #dropdown>
@@ -196,8 +187,17 @@ async function confirmRemoval(task?: PersonalAutomation) {
                 </template>
               </el-dropdown>
             </div>
+          </template>
+          <div class="page-toolbar page-tab-toolbar automation-query">
+            <el-select v-model="filter" class="filter-field filter-select" aria-label="任务状态" popper-class="filter-options">
+              <el-option v-for="status in filters" :key="status" :value="status" :label="statuses[status] + '任务'" />
+            </el-select>
+            <label class="automation-search filter-search">
+              <Search :size="15" aria-hidden="true" />
+              <input ref="searchField" v-model="query" type="search" placeholder="搜索任务" aria-label="搜索任务" />
+            </label>
           </div>
-        </header>
+        </PageHeader>
 
         <ul v-if="rows.length" class="automation-rows" aria-label="任务列表">
           <li v-for="task in rows" :key="task.id">
@@ -292,14 +292,14 @@ async function confirmRemoval(task?: PersonalAutomation) {
 }
 .automation-layout { display: flex; flex: 1; }
 .automation-list-pane { flex: 1; min-width: 0; }
-.automation-query { flex: 0 1 220px; }
+.automation-query { flex-wrap: nowrap; justify-content: flex-start; gap: 10px; }
 .automation-create { white-space: nowrap; }
 .automation-create-label { display: inline-flex; align-items: center; gap: 5px; }
 .automation-create :deep(.el-button) { padding-inline: 8px; font-size: 13px; }
-.automation-toolbar-controls .icon-button { width: 30px; height: 32px; }
+.page-title-row .icon-button { width: 30px; height: 32px; }
 .automation-search { flex: 0 1 220px; }
 .automation-rows, .automation-runs { display: grid; gap: 2px; padding: 0; margin: 0; list-style: none; }
-.automation-rows { margin: 8px 12px; }
+.automation-rows { margin: var(--page-body-start) var(--page-control-inline) 16px; }
 .automation-row {
   display: flex; align-items: center; width: 100%; min-height: 58px; gap: 12px; padding: 8px 12px;
   border: 0; border-radius: 10px; background: transparent; color: inherit; text-align: left;
@@ -315,14 +315,14 @@ async function confirmRemoval(task?: PersonalAutomation) {
 .automation-empty p { margin: 12px 0 0; }
 .automation-detail { flex: 0 0 min(42%, 460px); min-width: 0; border-inline-start: 1px solid var(--line); }
 .automation-detail-heading {
-  display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; min-width: 0; padding: 20px 18px 6px;
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; min-width: 0; padding: var(--page-body-start) 18px 6px;
 }
 .automation-detail-heading h2 { margin: 0 0 5px; font-size: 18px; font-weight: 650; overflow-wrap: anywhere; }
 .automation-detail-actions { display: flex; flex: none; gap: 2px; }
 .automation-detail-actions .icon-button { width: 30px; height: 30px; padding: 0; }
 .detail-status { color: var(--muted); font-size: 12px; }
 .automation-detail > .page-tabs { --page-control-inline: 12px; }
-.automation-detail-body { padding: 18px; }
+.automation-detail-body { padding: var(--page-body-start) 18px 18px; }
 .automation-detail-body h3 { margin: 17px 0 8px; font-size: 14px; font-weight: 650; }
 .automation-rule { margin: 0; padding: 2px 12px; border-radius: 10px; background: #f6f7f9; }
 .automation-rule div { display: flex; justify-content: space-between; gap: 10px; padding-block: 9px; }
@@ -344,16 +344,8 @@ async function confirmRemoval(task?: PersonalAutomation) {
   background: var(--surface); color: var(--text);
 }
 .form-error { margin: 0; color: #b03e35; }
-@container (max-width: 540px) {
-  .automation-query { flex: 1 1 114px; }
-}
 @container (max-width: 740px) {
-  .automation-rows { margin-inline: 8px; }
   .has-detail .automation-list-pane { display: none; }
   .automation-detail { flex-basis: 100%; border-inline-start: 0; }
-}
-@container (max-width: 440px) {
-  .automation-toolbar-controls { flex-basis: 100%; }
-  .automation-search { flex: 1; }
 }
 </style>

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import PageHeader from '@/components/PageHeader.vue'
+import { recordWorkbenchOperation } from '@/workbenchUsage'
 import { computed, nextTick, onUnmounted, ref, shallowRef, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { ArrowRight, ArrowUp, Check, ChevronDown, Download, Focus, LayoutGrid, Maximize2, MousePointer2, Palette, Pencil, Play, ScanLine, Smartphone, Sparkles, Type, Undo2, X } from 'lucide-vue-next'
@@ -9,7 +11,7 @@ import WorkbenchAssistantSelect from '@/components/WorkbenchAssistantSelect.vue'
 import DesignStudioScreen from './DesignStudioScreen.vue'
 import phoneCss from './designStudioPhone.css?inline'
 
-const props = defineProps<{ userId: string }>()
+const props = defineProps<{ userId: string; pageTitle: string }>()
 const storageKey = 'ai-worker-design-studio:' + props.userId
 const { assistant } = useWorkbenchAssistant()
 const fallbackAssistant = '设计助理'
@@ -229,6 +231,7 @@ function apply(exchange: Exchange) {
   }
   save(next, id)
   exchange.applied = true
+  recordWorkbenchOperation('workbench-design-studio', '应用界面设计建议')
 }
 
 function download(content: string, mime: string, extension: string) {
@@ -256,113 +259,119 @@ async function exportHtml() {
 </script>
 
 <template>
-  <div class="design-studio" @keydown.esc="selected = undefined">
-    <aside class="studio-assistant" aria-label="设计助理">
-      <header class="studio-assistant-header">
-        <span class="studio-icon"><Sparkles :size="17" aria-hidden="true" /></span>
-        <WorkbenchAssistantSelect class="studio-assistant-select" :fallback-label="fallbackAssistant" />
-        <span class="studio-demo">本地演示</span>
-      </header>
-      <div ref="messages" class="studio-messages" role="log" aria-label="设计对话">
-        <div v-if="!exchanges.length" class="studio-welcome">
-          <span class="studio-welcome-mark"><Sparkles :size="23" aria-hidden="true" /></span>
-          <h2>完善「{{ projectName }}」</h2>
-          <p>在画布中选中一个元素，说说你想怎么改。</p>
-          <div class="studio-suggestions">
-            <button type="button" @click="send('让选中按钮更醒目')">强调选中按钮 <ArrowRight :size="14" aria-hidden="true" /></button>
-            <button type="button" @click="send('检查按钮对比度')">检查按钮对比度 <ArrowRight :size="14" aria-hidden="true" /></button>
-          </div>
-        </div>
-        <template v-for="(exchange, index) in exchanges" :key="index">
-          <div class="studio-user-message"><small v-if="exchange.context">{{ exchange.context }}</small><p>{{ exchange.prompt }}</p></div>
-          <div class="studio-reply"><small class="studio-reply-author">{{ exchange.assistantName }}</small><p>{{ exchange.text }}</p>
-            <button v-if="exchange.suggestion" type="button" :disabled="exchange.applied" @click="apply(exchange)"><component :is="exchange.applied ? Check : Sparkles" :size="13" aria-hidden="true" />{{ exchange.applied ? '已应用' : '应用到画布' }}</button>
-          </div>
-        </template>
-      </div>
-      <form class="studio-composer" @submit.prevent="send()">
-        <div v-if="selected" class="studio-context" :title="design.notes[selected] || selectionName">
-          <Focus :size="13" aria-hidden="true" /><span>{{ selectionName }}</span>
-          <button type="button" aria-label="移除选区" @click="selected = undefined"><X :size="13" /></button>
-        </div>
-        <textarea v-model="prompt" aria-label="描述设计修改" placeholder="例如，把文案改成「查看购物车」" maxlength="240" rows="3" @keydown.enter.exact="sendOnEnter" />
-        <div class="studio-compose-footer"><span>{{ selected ? '修改选中元素' : '选择画布元素后可定向修改' }}</span><button type="submit" aria-label="发送修改" :disabled="!prompt.trim()"><ArrowUp :size="18" /></button></div>
-      </form>
-    </aside>
-
-    <section class="studio-canvas" aria-label="设计画布">
-      <div class="studio-canvas-header page-toolbar">
-        <div class="studio-project"><LayoutGrid :size="16" aria-hidden="true" /><strong>{{ projectName }}</strong><span>· {{ screens.length }} 屏</span></div>
-        <div class="studio-canvas-actions page-toolbar-controls">
+  <div class="studio-workbench" @keydown.esc="selected = undefined">
+    <PageHeader :title="pageTitle">
+      <template #actions>
+        <div class="studio-canvas-actions">
           <button type="button" aria-label="撤销修改" title="撤销修改" :disabled="!versions.length" @click="undo"><Undo2 :size="16" /></button>
           <button type="button" @click="openDialog('appearance')"><Palette :size="16" aria-hidden="true" />外观</button>
           <button type="button" @click="openDialog('check')"><ScanLine :size="16" aria-hidden="true" />体检</button>
           <button class="studio-export" type="button" @click="openDialog('export')"><Download :size="16" aria-hidden="true" />导出</button>
         </div>
-      </div>
-      <div ref="viewport" class="studio-viewport">
-        <div class="studio-stage" :class="{ 'single-screen': single }" :style="{ zoom: zoomScale }">
-          <div v-for="(screen, index) in visibleScreens" :key="screen.id" class="studio-artboard" :class="{ 'is-active': screen.id === activeScreen }">
-            <div class="studio-artboard-heading">
-              <button type="button" :aria-current="screen.id === activeScreen ? 'true' : undefined" @click="selectScreen(screen.id)">{{ screen.name }}</button>
-              <small>{{ screen.file }}</small>
+      </template>
+    </PageHeader>
+    <div class="design-studio">
+      <aside class="studio-assistant" aria-label="设计助理">
+        <header class="studio-assistant-header">
+          <span class="studio-icon"><Sparkles :size="17" aria-hidden="true" /></span>
+          <WorkbenchAssistantSelect class="studio-assistant-select" :fallback-label="fallbackAssistant" />
+          <span class="studio-demo">本地演示</span>
+        </header>
+        <div ref="messages" class="studio-messages" role="log" aria-label="设计对话">
+          <div v-if="!exchanges.length" class="studio-welcome">
+            <span class="studio-welcome-mark"><Sparkles :size="23" aria-hidden="true" /></span>
+            <h2>完善「{{ projectName }}」</h2>
+            <p>在画布中选中一个元素，说说你想怎么改。</p>
+            <div class="studio-suggestions">
+              <button type="button" @click="send('让选中按钮更醒目')">强调选中按钮 <ArrowRight :size="14" aria-hidden="true" /></button>
+              <button type="button" @click="send('检查按钮对比度')">检查按钮对比度 <ArrowRight :size="14" aria-hidden="true" /></button>
             </div>
-            <DesignStudioScreen
-              :screen="screen.id" :design="design" :basket="preview ? (screen.id === 'orders' ? orderBasket ?? basket : basket) : sampleBasket"
-              :photo="noodlePhoto" :selected="selected" :changed="changed" :preview="preview" :ordered="!!orderBasket"
-              @select="select" @navigate="selectScreen" @quantity="adjustQuantity" @checkout="checkout"
-            />
-            <span v-if="!single && index < visibleScreens.length - 1" class="studio-flow-arrow" aria-hidden="true"><ArrowRight :size="17" /></span>
+          </div>
+          <template v-for="(exchange, index) in exchanges" :key="index">
+            <div class="studio-user-message"><small v-if="exchange.context">{{ exchange.context }}</small><p>{{ exchange.prompt }}</p></div>
+            <div class="studio-reply"><small class="studio-reply-author">{{ exchange.assistantName }}</small><p>{{ exchange.text }}</p>
+              <button v-if="exchange.suggestion" type="button" :disabled="exchange.applied" @click="apply(exchange)"><component :is="exchange.applied ? Check : Sparkles" :size="13" aria-hidden="true" />{{ exchange.applied ? '已应用' : '应用到画布' }}</button>
+            </div>
+          </template>
+        </div>
+        <form class="studio-composer" @submit.prevent="send()">
+          <div v-if="selected" class="studio-context" :title="design.notes[selected] || selectionName">
+            <Focus :size="13" aria-hidden="true" /><span>{{ selectionName }}</span>
+            <button type="button" aria-label="移除选区" @click="selected = undefined"><X :size="13" /></button>
+          </div>
+          <textarea v-model="prompt" aria-label="描述设计修改" placeholder="例如，把文案改成「查看购物车」" maxlength="240" rows="3" @keydown.enter.exact="sendOnEnter" />
+          <div class="studio-compose-footer"><span>{{ selected ? '修改选中元素' : '选择画布元素后可定向修改' }}</span><button type="submit" aria-label="发送修改" :disabled="!prompt.trim()"><ArrowUp :size="18" /></button></div>
+        </form>
+      </aside>
+
+      <section class="studio-canvas" aria-label="设计画布">
+        <div class="studio-canvas-header page-toolbar">
+          <div class="studio-project"><LayoutGrid :size="16" aria-hidden="true" /><strong>{{ projectName }}</strong><span>· {{ screens.length }} 屏</span></div>
+        </div>
+        <div ref="viewport" class="studio-viewport">
+          <div class="studio-stage" :class="{ 'single-screen': single }" :style="{ zoom: zoomScale }">
+            <div v-for="(screen, index) in visibleScreens" :key="screen.id" class="studio-artboard" :class="{ 'is-active': screen.id === activeScreen }">
+              <div class="studio-artboard-heading">
+                <button type="button" :aria-current="screen.id === activeScreen ? 'true' : undefined" @click="selectScreen(screen.id)">{{ screen.name }}</button>
+                <small>{{ screen.file }}</small>
+              </div>
+              <DesignStudioScreen
+                :screen="screen.id" :design="design" :basket="preview ? (screen.id === 'orders' ? orderBasket ?? basket : basket) : sampleBasket"
+                :photo="noodlePhoto" :selected="selected" :changed="changed" :preview="preview" :ordered="!!orderBasket"
+                @select="select" @navigate="selectScreen" @quantity="adjustQuantity" @checkout="checkout"
+              />
+              <span v-if="!single && index < visibleScreens.length - 1" class="studio-flow-arrow" aria-hidden="true"><ArrowRight :size="17" /></span>
+            </div>
           </div>
         </div>
-      </div>
-      <div class="studio-canvas-footer">
-        <div class="studio-toolbar" role="group" aria-label="画布工具">
-          <button type="button" :aria-pressed="!preview" @click="focusSelection"><MousePointer2 :size="16" aria-hidden="true" />选择</button>
-          <button type="button" :disabled="!selected || preview" @click="openDialog('text')"><Type :size="16" aria-hidden="true" />改字</button>
-          <button type="button" :disabled="!selected || preview" @click="openDialog('style')"><Palette :size="16" aria-hidden="true" />样式</button>
-          <button type="button" :disabled="!selected || preview" @click="openDialog('note')"><Pencil :size="16" aria-hidden="true" />标注</button>
-          <button type="button" :aria-pressed="preview" @click="tryPrototype"><Play :size="16" aria-hidden="true" />{{ preview ? '退出试用' : '试用' }}</button>
-        </div>
-        <div class="studio-view-tools">
-          <button type="button" :aria-label="single ? '多屏画布' : '单屏视图'" :title="single ? '多屏画布' : '单屏视图'" :disabled="preview" @click="view = view === 'canvas' ? 'single' : 'canvas'"><component :is="single ? LayoutGrid : Smartphone" :size="16" /></button>
-          <label :title="`当前缩放 ${Math.round(zoomScale * 100)}%`"><Maximize2 :size="14" aria-hidden="true" />
-            <select v-model="zoom" aria-label="画布缩放"><option value="fit">适应</option><option value="0.8">80%</option><option value="1">100%</option><option value="1.25">125%</option></select>
-            <ChevronDown :size="12" aria-hidden="true" />
-          </label>
-        </div>
-      </div>
-    </section>
-
-    <el-dialog :model-value="!!dialog" :title="dialogTitle" width="min(420px, calc(100vw - 30px))" append-to-body @update:model-value="!$event && (dialog = '')">
-      <form v-if="dialog === 'text' || dialog === 'style' || dialog === 'note' || dialog === 'appearance'" class="studio-dialog-form" @submit.prevent="commitDialog">
-        <p v-if="dialog !== 'appearance'" class="studio-dialog-context">{{ selectionName }}</p>
-        <label v-if="dialog === 'text'">文案<input v-model="editText" maxlength="30" required /></label>
-        <label v-if="dialog === 'note'">标注内容<textarea v-model="editText" maxlength="160" rows="3" placeholder="写下设计要求，或清空已有标注" /></label>
-        <template v-if="dialog === 'style' || dialog === 'appearance'">
-          <label>{{ dialog === 'appearance' ? '品牌主色' : '元素颜色' }}<span class="studio-color-input"><input v-model="editColor" type="color" /><code>{{ editColor }}</code></span></label>
-          <div class="studio-swatches">
-            <button v-for="item in colors" :key="item.name" type="button" :aria-label="item.name" :title="item.name" :aria-pressed="editColor === item.color" :style="{ background: item.color }" @click="editColor = item.color" />
+        <div class="studio-canvas-footer">
+          <div class="studio-toolbar" role="group" aria-label="画布工具">
+            <button type="button" :aria-pressed="!preview" @click="focusSelection"><MousePointer2 :size="16" aria-hidden="true" />选择</button>
+            <button type="button" :disabled="!selected || preview" @click="openDialog('text')"><Type :size="16" aria-hidden="true" />改字</button>
+            <button type="button" :disabled="!selected || preview" @click="openDialog('style')"><Palette :size="16" aria-hidden="true" />样式</button>
+            <button type="button" :disabled="!selected || preview" @click="openDialog('note')"><Pencil :size="16" aria-hidden="true" />标注</button>
+            <button type="button" :aria-pressed="preview" @click="tryPrototype"><Play :size="16" aria-hidden="true" />{{ preview ? '退出试用' : '试用' }}</button>
           </div>
-          <label v-if="dialog === 'appearance'">卡片圆角 {{ editRadius }} px<input v-model.number="editRadius" type="range" min="4" max="20" /></label>
-          <label v-else class="studio-checkbox"><input v-model="editEmphasis" type="checkbox" />强调元素</label>
-        </template>
-        <el-button type="primary" native-type="submit" :disabled="dialog === 'text' && !editText.trim()">应用到画布</el-button>
-      </form>
-      <div v-else-if="dialog === 'check'" class="studio-check">
-        <p>主要跳转按钮的文字对比度。最低目标为 4.5:1。</p>
-        <button v-for="result in checkResults" :key="result.id" type="button" @click="preview = false; select(result.id); dialog = ''">
-          <span>{{ screenName(screenOf(result.id)) }} · {{ elements[result.id].name }}</span><strong :class="{ 'check-fail': !result.passed }">{{ result.ratio.toFixed(2) }}:1 · {{ result.passed ? '通过' : '需调整' }}</strong>
-        </button>
-      </div>
-      <div v-else-if="dialog === 'export'" class="studio-export-options">
-        <button type="button" :disabled="exporting" @click="exportHtml"><strong>HTML 原型</strong><small>包含三屏与页面跳转，可离线打开</small><Download :size="16" aria-hidden="true" /></button>
-        <button type="button" @click="download(JSON.stringify({ name: projectName, screens, ...design }, null, 2), 'application/json', 'json')"><strong>设计配置 JSON</strong><small>包含文案、颜色、样式和标注</small><Download :size="16" aria-hidden="true" /></button>
-      </div>
-    </el-dialog>
+          <div class="studio-view-tools">
+            <button type="button" :aria-label="single ? '多屏画布' : '单屏视图'" :title="single ? '多屏画布' : '单屏视图'" :disabled="preview" @click="view = view === 'canvas' ? 'single' : 'canvas'"><component :is="single ? LayoutGrid : Smartphone" :size="16" /></button>
+            <label :title="`当前缩放 ${Math.round(zoomScale * 100)}%`"><Maximize2 :size="14" aria-hidden="true" />
+              <select v-model="zoom" aria-label="画布缩放"><option value="fit">适应</option><option value="0.8">80%</option><option value="1">100%</option><option value="1.25">125%</option></select>
+              <ChevronDown :size="12" aria-hidden="true" />
+            </label>
+          </div>
+        </div>
+      </section>
 
-    <div v-if="exporting" ref="exportArea" hidden>
-      <section v-for="screen in screens" :id="screen.id" :key="screen.id"><h2>{{ screen.name }}</h2><DesignStudioScreen :screen="screen.id" :design="design" :basket="sampleBasket" :photo="noodlePhoto" :preview="false" :ordered="true" /></section>
+      <el-dialog :model-value="!!dialog" :title="dialogTitle" width="min(420px, calc(100vw - 30px))" append-to-body @update:model-value="!$event && (dialog = '')">
+        <form v-if="dialog === 'text' || dialog === 'style' || dialog === 'note' || dialog === 'appearance'" class="studio-dialog-form" @submit.prevent="commitDialog">
+          <p v-if="dialog !== 'appearance'" class="studio-dialog-context">{{ selectionName }}</p>
+          <label v-if="dialog === 'text'">文案<input v-model="editText" maxlength="30" required /></label>
+          <label v-if="dialog === 'note'">标注内容<textarea v-model="editText" maxlength="160" rows="3" placeholder="写下设计要求，或清空已有标注" /></label>
+          <template v-if="dialog === 'style' || dialog === 'appearance'">
+            <label>{{ dialog === 'appearance' ? '品牌主色' : '元素颜色' }}<span class="studio-color-input"><input v-model="editColor" type="color" /><code>{{ editColor }}</code></span></label>
+            <div class="studio-swatches">
+              <button v-for="item in colors" :key="item.name" type="button" :aria-label="item.name" :title="item.name" :aria-pressed="editColor === item.color" :style="{ background: item.color }" @click="editColor = item.color" />
+            </div>
+            <label v-if="dialog === 'appearance'">卡片圆角 {{ editRadius }} px<input v-model.number="editRadius" type="range" min="4" max="20" /></label>
+            <label v-else class="studio-checkbox"><input v-model="editEmphasis" type="checkbox" />强调元素</label>
+          </template>
+          <el-button type="primary" native-type="submit" :disabled="dialog === 'text' && !editText.trim()">应用到画布</el-button>
+        </form>
+        <div v-else-if="dialog === 'check'" class="studio-check">
+          <p>主要跳转按钮的文字对比度。最低目标为 4.5:1。</p>
+          <button v-for="result in checkResults" :key="result.id" type="button" @click="preview = false; select(result.id); dialog = ''">
+            <span>{{ screenName(screenOf(result.id)) }} · {{ elements[result.id].name }}</span><strong :class="{ 'check-fail': !result.passed }">{{ result.ratio.toFixed(2) }}:1 · {{ result.passed ? '通过' : '需调整' }}</strong>
+          </button>
+        </div>
+        <div v-else-if="dialog === 'export'" class="studio-export-options">
+          <button type="button" :disabled="exporting" @click="exportHtml"><strong>HTML 原型</strong><small>包含三屏与页面跳转，可离线打开</small><Download :size="16" aria-hidden="true" /></button>
+          <button type="button" @click="download(JSON.stringify({ name: projectName, screens, ...design }, null, 2), 'application/json', 'json')"><strong>设计配置 JSON</strong><small>包含文案、颜色、样式和标注</small><Download :size="16" aria-hidden="true" /></button>
+        </div>
+      </el-dialog>
+
+      <div v-if="exporting" ref="exportArea" hidden>
+        <section v-for="screen in screens" :id="screen.id" :key="screen.id"><h2>{{ screen.name }}</h2><DesignStudioScreen :screen="screen.id" :design="design" :basket="sampleBasket" :photo="noodlePhoto" :preview="false" :ordered="true" /></section>
+      </div>
     </div>
   </div>
 </template>

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PageHeader from '@/components/PageHeader.vue'
 import { computed, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElDrawer, ElMessage } from 'element-plus'
@@ -85,16 +86,18 @@ watch(() => route.query.assistant, id => {
 </script>
 
 <template>
-  <div class="page page-surface">
-      <section aria-label="组织助理列表">
+  <div class="page page-surface page-with-control-inset">
+      <PageHeader title="组织助理配置">
+        <template v-if="isAdmin" #actions>
+          <el-button type="primary" :icon="Plus" @click="openEditor()">新建组织助理</el-button>
+        </template>
         <div class="page-toolbar page-tab-toolbar assistant-filters">
           <div class="page-toolbar-filters">
             <el-input v-model="query" :prefix-icon="Search" aria-label="搜索组织助理" placeholder="搜索助理名称或用途" clearable />
           </div>
-          <div v-if="isAdmin" class="page-toolbar-controls">
-            <el-button type="primary" :icon="Plus" @click="openEditor()">新建组织助理</el-button>
-          </div>
         </div>
+      </PageHeader>
+      <section class="page-body" aria-label="组织助理列表">
         <template v-if="listedAssistants.length">
           <div class="assistant-columns" aria-hidden="true"><span>助理</span><span>生效版本</span><span>操作</span></div>
           <ul class="assistant-rows">
@@ -165,7 +168,6 @@ watch(() => route.query.assistant, id => {
   background: var(--canvas);
   font-size: 12px;
   font-weight: 600;
-  border-top: 1px solid var(--line);
 }
 .assistant-rows { margin: 0; padding: 0; list-style: none; }
 .assistant-row { min-height: 67px; border-top: 1px solid var(--line); }

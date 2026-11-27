@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PageHeader from '@/components/PageHeader.vue'
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ArrowRight, Collection, Plus, Search } from '@element-plus/icons-vue'
@@ -15,9 +16,9 @@ const organization = useOrganizationAdminStore()
 const canDevelop = computed(() => platform.currentUser.role === 'admin' || organization.capabilities.some(item =>
   resourceTypes.some(type => type === item.type) && (organization.canConfigureCapability(item.id) || organization.canPublishCapability(item.id))))
 const scopes: { value: ResourceScopeFilter; label: string }[] = [
-  { value: 'all', label: '全部' },
-  { value: 'own', label: '我的' },
-  { value: 'shared', label: '共享' },
+  { value: 'all', label: '全部资源' },
+  { value: 'own', label: '我的资源' },
+  { value: 'shared', label: '共享资源' },
 ]
 const statuses: Resource['status'][] = ['可用', '未连接', '停用']
 const icons = new Map(resourceTypeItems.map(({ type, icon }) => [type, icon]))
@@ -63,7 +64,7 @@ const dependencies = computed(() => {
         name: assistant.name,
         kind: '助理',
         to: platform.myAssistants.some(item => item.id === assistant.id)
-          ? { path: '/work/assistants', query: { configure: assistant.id } }
+          ? { name: 'personal-assistant-configuration', params: { id: assistant.id }, query: { scope: 'own' } }
           : { path: '/work/assistants', query: { scope: 'shared' } },
       })),
     ...platform.visibleEmployees
@@ -99,8 +100,8 @@ watch(() => platform.currentUser.id, () => {
   dialogOpen.value = false
 })
 
-function scopeLocation(scope: ResourceScopeFilter) {
-  return resourceLibraryLocation({ ...route.query, scope }, typeFilter.value)
+function selectScope(scope: ResourceScopeFilter) {
+  void router.push(resourceLibraryLocation({ ...route.query, scope }, typeFilter.value))
 }
 
 function isOwnResource(resource: Resource) {
@@ -164,29 +165,20 @@ function save() {
 </script>
 
 <template>
-  <section class="page-surface resources-page" :aria-label="typeFilter ?? '资源库'">
-    <header class="page-controls">
-      <nav class="page-tabs" aria-label="资源来源">
-        <RouterLink
-          v-for="item in scopes"
-          :key="item.value"
-          :to="scopeLocation(item.value)"
-          custom
-          v-slot="{ href, navigate }"
-        >
-          <a class="page-tab" :href="href" :aria-current="scopeFilter === item.value ? 'page' : undefined" @click="navigate">{{ item.label }}</a>
-        </RouterLink>
-      </nav>
+  <section class="page-surface page-with-control-inset resources-page" :aria-label="typeFilter ?? '资源库'">
+    <PageHeader :title="typeFilter ?? '资源库'">
+      <template #actions>
+        <RouterLink v-if="canDevelop" class="el-button" :to="{ name: 'resource-management' }">组织资源维护</RouterLink>
+        <el-button type="primary" :icon="Plus" @click="open()">添加资源</el-button>
+      </template>
       <div class="page-toolbar page-tab-toolbar resource-toolbar">
-        <div class="page-toolbar-filters">
-          <el-input v-model="search" :prefix-icon="Search" class="resource-search" placeholder="搜索" aria-label="搜索资源" clearable />
-        </div>
-        <div class="page-toolbar-controls">
-          <RouterLink v-if="canDevelop" class="el-button" :to="{ name: 'resource-management' }">组织资源维护</RouterLink>
-          <el-button type="primary" :icon="Plus" @click="open()">添加资源</el-button>
-        </div>
+        <el-select :model-value="scopeFilter" class="filter-field filter-select" aria-label="资源范围"
+          popper-class="filter-options" @update:model-value="selectScope">
+          <el-option v-for="item in scopes" :key="item.value" :value="item.value" :label="item.label" />
+        </el-select>
+        <el-input v-model="search" :prefix-icon="Search" class="filter-field resource-search" placeholder="搜索资源" aria-label="搜索资源" clearable />
       </div>
-    </header>
+    </PageHeader>
 
     <div v-if="visible.length" class="page-body resource-grid">
       <article v-for="resource in visible" :key="resource.id" class="panel resource-card">
@@ -254,7 +246,8 @@ function save() {
 </template>
 
 <style scoped>
-.resource-search { width: 184px; }
+.resource-toolbar { flex-wrap: nowrap; justify-content: flex-start; gap: 10px; }
+.resource-search { flex: 0 1 184px; min-width: 0; }
 .resource-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(230px, 100%), 1fr)); gap: 13px; }
 .resource-card { display: flex; flex-direction: column; padding: 16px; min-width: 0; }
 .card-top, .card-footer { display: flex; justify-content: space-between; align-items: center; gap: 7px; }
@@ -286,8 +279,4 @@ function save() {
 .resource-dependencies li { display: flex; align-items: baseline; gap: 8px; }
 .resource-dependencies li span { flex: none; border-radius: 4px; padding: 2px 5px; color: var(--muted); background: var(--soft); font-size: 11px; }
 .resource-dependencies a { color: var(--accent); overflow-wrap: anywhere; }
-@media (max-width: 560px) {
-  .resource-search { width: clamp(90px, 32vw, 184px); }
-  .resource-toolbar .el-button { padding-inline: 6px; }
-}
 </style>

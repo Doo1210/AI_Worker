@@ -11,12 +11,14 @@ export interface SidebarLayout {
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
 import { Compass, FileText, FolderOpen, Globe, Maximize2, Minimize2, PanelRightClose, Plus, Terminal, X } from 'lucide-vue-next'
-import { usePlatformStore, type Conversation } from '@/stores/platform'
+import type { Conversation } from '@/stores/platform'
+import type { ResolvedWorkspaceDirectory } from '@/workspaceDirectory'
 import ConversationFileTree from './ConversationFileTree.vue'
+import ConversationMarkdown from './ConversationMarkdown.vue'
 import ConversationSidebarBrowser from './ConversationSidebarBrowser.vue'
 import ConversationSidebarTerminal from './ConversationSidebarTerminal.vue'
 
-const props = defineProps<{ layout: SidebarLayout; conversation?: Conversation; expanded: boolean }>()
+const props = defineProps<{ layout: SidebarLayout; conversation?: Conversation; directory?: ResolvedWorkspaceDirectory; expanded: boolean }>()
 const emit = defineEmits<{
   'update:layout': [layout: SidebarLayout]
   close: []
@@ -24,7 +26,6 @@ const emit = defineEmits<{
   reference: [id: string]
   editArtifact: [id: string]
 }>()
-const store = usePlatformStore()
 const tabStrip = ref<HTMLElement>()
 const closeButton = ref<HTMLButtonElement>()
 const tools = [
@@ -33,7 +34,7 @@ const tools = [
   { id: 'browser', label: '浏览器', action: '浏览器', icon: Globe },
 ] as const
 const artifacts = computed(() => props.conversation?.messages.filter(message => message.artifactName) ?? [])
-const filesById = computed(() => new Map(store.myFiles.map(file => [file.id, file])))
+const filesById = computed(() => new Map(props.directory?.files.map(file => [file.id, file])))
 const artifactsById = computed(() => new Map(artifacts.value.map(message => [message.id, message])))
 const activeFile = computed(() => props.layout.active.startsWith('file:') ? filesById.value.get(props.layout.active.slice(5)) : undefined)
 const activeArtifact = computed(() => props.layout.active.startsWith('artifact:') ? artifactsById.value.get(props.layout.active.slice(9)) : undefined)
@@ -86,6 +87,10 @@ function openFile(id: string) {
   if (filesById.value.has(id)) openTab(`file:${id}`)
 }
 
+function openArtifact(id: string) {
+  if (artifactsById.value.has(id)) openTab(`artifact:${id}`)
+}
+
 function downloadFile() {
   const file = activeFile.value
   if (!file) return
@@ -101,7 +106,7 @@ function focusClose() {
   closeButton.value?.focus({ preventScroll: true })
 }
 
-defineExpose({ openFile, focusClose })
+defineExpose({ openFile, openArtifact, focusClose })
 </script>
 
 <template>
@@ -153,10 +158,11 @@ defineExpose({ openFile, focusClose })
       </div>
 
       <div v-if="layout.tabs.includes('files')" v-show="layout.active === 'files'" class="sidebar-files">
-        <ConversationFileTree :active-file-id="activeFile?.id" @open-file="openFile" />
+        <ConversationFileTree v-if="directory" :directory="directory" :active-file-id="activeFile?.id" @open-file="openFile" />
+        <p v-else class="preview-note">工作目录不可用。</p>
         <div v-if="artifacts.length" class="sidebar-artifacts">
           <h3>会话产物</h3>
-          <button v-for="item in artifacts" :key="item.id" type="button" @click="openTab(`artifact:${item.id}`)">
+          <button v-for="item in artifacts" :key="item.id" type="button" @click="openArtifact(item.id)">
             <FileText :size="15" aria-hidden="true" /><span>{{ tabLabel(`artifact:${item.id}`) }}</span>
           </button>
         </div>
@@ -178,10 +184,11 @@ defineExpose({ openFile, focusClose })
               text
               size="small"
               @click="emit('editArtifact', activeArtifact.id)"
-            >{{ savedArtifact ? '查看已保存产物' : '编辑与保存' }}</el-button>
+            >{{ savedArtifact ? '查看已保存产物' : directory?.canWrite ? '编辑与保存' : '预览产物' }}</el-button>
           </div>
         </div>
         <img v-if="activeFile?.type === 'image' && activeFile.dataUrl" class="preview-image" :src="activeFile.dataUrl" :alt="activeFile.name" />
+        <ConversationMarkdown v-else-if="activeArtifact && previewText" class="preview-markdown" :text="previewText" />
         <pre v-else-if="previewText" class="preview-text">{{ previewText }}</pre>
         <p v-else class="preview-note">可下载后查看此文件。</p>
       </div>
@@ -192,6 +199,7 @@ defineExpose({ openFile, focusClose })
 
 <style scoped>
 .right-sidebar { display: flex; flex-direction: column; min-width: 0; overflow: hidden; background: var(--canvas); }
+.preview-markdown { padding: 12px 14px; }
 .sidebar-toolbar { display: flex; flex: none; align-items: center; gap: 4px; min-width: 0; padding: 6px; border-bottom: 1px solid var(--line); }
 .sidebar-tabs { display: flex; flex: 1; align-items: center; gap: 3px; min-width: 0; overflow: auto; scrollbar-width: thin; }
 .sidebar-tab { display: flex; align-items: center; flex: 0 0 auto; min-width: 0; border-radius: 6px; color: var(--muted); }
@@ -205,7 +213,7 @@ defineExpose({ openFile, focusClose })
 .toolbar-button:hover, .tab-close:hover { color: var(--accent); background: var(--soft); }
 .sidebar-body { flex: 1; min-height: 0; overflow: auto; }
 .sidebar-guide { display: grid; justify-items: center; gap: 18px; padding: 38px 15px; }
-.guide-icon { color: #8597bf; }
+.guide-icon { color: var(--muted); }
 .guide-tools { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
 .guide-tools button {
   display: flex; align-items: center; gap: 7px; padding: 8px 11px; border: 1px solid var(--line);

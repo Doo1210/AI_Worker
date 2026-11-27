@@ -1,4 +1,5 @@
-.design-studio { --studio-blue: #505beb; --studio-line: #e6e7ef; display: grid; grid-template-columns: minmax(268px, .36fr) minmax(0, 1fr); min-height: 620px; height: calc(var(--shell-body-height, 100dvh) - var(--content-padding-top, 20px) - var(--content-padding-bottom, 16px) - 2px); }
+.studio-workbench { --studio-blue: #505beb; --studio-line: #e6e7ef; }
+.design-studio { display: grid; grid-template-columns: minmax(268px, .36fr) minmax(0, 1fr); margin-block-start: var(--page-body-start); min-height: 560px; height: calc(var(--shell-body-height, 100dvh) - var(--page-title-height) - var(--page-body-start)); }
 .studio-assistant { display: flex; min-width: 0; min-height: 0; flex-direction: column; border-right: 1px solid var(--studio-line); }
 .studio-assistant-header { display: flex; align-items: center; gap: 9px; padding: 9px 15px; border-bottom: 1px solid #eff0f5; }
 .studio-icon, .studio-welcome-mark { display: grid; flex: none; place-items: center; width: 34px; height: 34px; border-radius: 9px; background: #f0efff; color: #4c52d0; }

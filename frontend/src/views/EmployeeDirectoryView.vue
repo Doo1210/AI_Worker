@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PageHeader from '@/components/PageHeader.vue'
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { Search } from '@element-plus/icons-vue'
@@ -58,13 +59,15 @@ function taskOverviewRoute(id: string) {
 </script>
 
 <template>
-  <section class="page page-surface employee-directory" aria-label="AI 员工目录">
-    <header class="page-controls page-toolbar page-tab-toolbar">
-      <div class="page-toolbar-filters directory-filters">
-        <el-input v-model="search" class="directory-search" :prefix-icon="Search" placeholder="搜索员工、岗位或任务" aria-label="搜索 AI 员工" clearable />
-        <span class="directory-count muted" aria-live="polite">{{ employees.length }} 位员工</span>
+  <section class="page page-surface page-with-control-inset employee-directory" aria-label="AI 员工目录">
+    <PageHeader title="AI 员工目录">
+      <div class="page-toolbar page-tab-toolbar">
+        <div class="page-toolbar-filters directory-filters">
+          <el-input v-model="search" class="directory-search" :prefix-icon="Search" placeholder="搜索员工、岗位或任务" aria-label="搜索 AI 员工" clearable />
+          <span class="directory-count muted" aria-live="polite">{{ employees.length }} 位员工</span>
+        </div>
       </div>
-    </header>
+    </PageHeader>
 
     <div v-if="employees.length" class="page-body employee-grid">
       <article v-for="employee in employees" :key="employee.id" class="panel employee-card">

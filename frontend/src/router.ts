@@ -13,12 +13,14 @@ export function makeRouter(pinia: Pinia) {
       { path: '/', redirect: '/work/chat' },
       { path: '/work', redirect: '/work/chat' },
       { path: '/work/chat/:id?', component: () => import('@/views/ConversationView.vue') },
-      { path: '/work/assistants', component: () => import('@/views/AssistantsView.vue') },
+      { path: '/work/assistants', name: 'personal-assistants', component: () => import('@/views/AssistantsView.vue') },
       { path: '/work/assistants/manage', name: 'assistant-management', component: () => import('@/views/AdminAssistantsView.vue') },
+      { path: '/work/assistants/:id/configuration', name: 'personal-assistant-configuration', component: () => import('@/views/AssistantConfigurationView.vue') },
       { path: '/work/workspace', component: () => import('@/views/WorkspaceView.vue') },
       { path: '/work/automations', name: 'personal-automations', component: () => import('@/views/PersonalAutomationsView.vue') },
       { path: '/work/resources', component: () => import('@/views/ResourcesView.vue') },
       { path: '/work/resources/manage/:id?', name: 'resource-management', component: () => import('@/views/AdminView.vue') },
+      { path: '/work/workbenches/manage/:id', redirect: to => ({ name: 'admin-workbenches', params: { id: to.params.id }, query: { tab: 'configuration' } }) },
       { path: '/work/workbenches/:id?', name: 'workbench', component: () => import('@/views/WorkbenchView.vue') },
       { path: '/employees', name: 'employee-directory', component: () => import('@/views/EmployeeDirectoryView.vue') },
       { path: '/employees/overview', name: 'employee-task-overview', component: () => import('@/views/EmployeeTaskOverviewView.vue') },
@@ -28,6 +30,9 @@ export function makeRouter(pinia: Pinia) {
       { path: '/employees/manage/:id?', name: 'employee-management', component: () => import('@/views/AdminView.vue') },
       { path: '/employees/:id/autonomous-tasks', name: 'employee-autonomous-tasks', component: () => import('@/views/EmployeeAutonomousTasksView.vue') },
       { path: '/employees/:id', name: 'employee-contact', component: () => import('@/views/EmployeesView.vue') },
+      { path: '/admin/plugins/:id?', name: 'admin-plugins', component: () => import('@/views/AdminPluginsView.vue') },
+      { path: '/admin/activity', name: 'admin-activity', component: () => import('@/views/AdminActivityView.vue') },
+      { path: '/admin/usage', name: 'admin-usage', component: () => import('@/views/AdminUsageView.vue') },
       { path: '/admin/overview', name: 'admin-overview', component: () => import('@/views/AdminOverviewView.vue') },
       { path: '/admin/members/:id?', name: 'admin-members', component: () => import('@/views/AdminMembersView.vue') },
       { path: '/admin/departments', name: 'admin-departments', redirect: to => ({ name: 'admin-members', query: to.query }) },
@@ -58,6 +63,15 @@ export function makeRouter(pinia: Pinia) {
     }
 
     const store = usePlatformStore(pinia)
+    if (to.name === 'personal-assistants' && 'configure' in to.query) {
+      const { configure, ...query } = to.query
+      if (typeof configure === 'string' && store.myAssistants.some(assistant => assistant.id === configure)) {
+        return {
+          name: 'personal-assistant-configuration', params: { id: configure }, query: { ...query, scope: 'own' }, replace: true,
+        }
+      }
+      return { name: 'personal-assistants', query, replace: true }
+    }
     const organization = useOrganizationAdminStore(pinia)
     const admin = store.currentUser.role === 'admin'
     if (to.path === '/work/workspace' && to.query.scope !== 'shared') {
@@ -70,14 +84,15 @@ export function makeRouter(pinia: Pinia) {
       }
     }
     if (to.path.startsWith('/admin')) {
-      if (to.name === 'admin-employees' && !admin && organization.myEmployeeMaintenance.size) {
+      if (to.name === 'admin-employees' && !admin && !organization.canViewCapabilities && organization.myEmployeeMaintenance.size) {
         return { name: 'employee-management', params: { id: to.params.id }, replace: true }
       }
       if (!admin) {
+        if (organization.canVisitAdmin(String(to.name)) && !['admin-members', 'admin-departments'].includes(String(to.name))) return true
         if (!organization.canOpenAdmin) return '/work/chat'
-        if (to.name === 'admin-departments') return true
-        if (to.name === 'admin-members' && (!to.params.id || organization.visibleMembers.some(member => member.id === to.params.id))) return true
-        return { name: 'admin-members', replace: true }
+        if (to.name === 'admin-departments' && organization.canVisitAdmin('admin-departments')) return true
+        if (to.name === 'admin-members' && organization.canVisitAdmin('admin-members') && (!to.params.id || organization.visibleMembers.some(member => member.id === to.params.id))) return true
+        return { path: organization.adminHome, replace: true }
       }
 
       if (to.path === '/admin') return { name: 'admin-overview', replace: true }

@@ -20,9 +20,9 @@ const period = computed(() => periods.find(item => item.value === route.query.pe
 const departmentId = computed(() => organization.departments.find(item => item.id === route.query.department)?.id ?? '')
 const data = computed(() => overview.snapshot(period.value, departmentId.value))
 const metricIcons = {
-  members: UsersRound, assistant: MessagesSquare, tasks: Bot, issues: CircleAlert, tokens: Layers3, cost: BadgeDollarSign,
+  members: UsersRound, assistant: MessagesSquare, workbench: Boxes, tasks: Bot, issues: CircleAlert, failures: CircleAlert, tokens: Layers3, cost: BadgeDollarSign,
 }
-const currentMetric = computed(() => data.value.metrics.find(item => item.id === route.query.metric))
+const currentMetric = computed(() => [...data.value.metrics, { id: 'issues' as const, label: '当前需关注', value: String(data.value.details.issues.length), detail: '按依赖问题归并，受影响能力单独列示' }].find(item => item.id === route.query.metric))
 const currentRows = computed(() => currentMetric.value ? data.value.details[currentMetric.value.id] : [])
 const currentRecord = computed(() => currentRows.value.find(item => item.id === route.query.record))
 const drawerOpen = computed({
@@ -30,7 +30,7 @@ const drawerOpen = computed({
   set: value => { if (!value) void router.replace({ query: { ...route.query, metric: undefined, record: undefined } }) },
 })
 const trendOptions = [
-  { id: 'assistant', name: '助理请求' }, { id: 'workbench', name: '工作台使用' }, { id: 'tasks', name: 'AI 员工任务' },
+  { id: 'assistant', name: '助理请求' }, { id: 'workbench', name: '工作台使用' },
 ] as const
 const trendType = computed(() => trendOptions.find(item => item.id === route.query.trend) ?? trendOptions[0])
 const trendMaximum = computed(() => Math.max(1, ...data.value.trend.map(item => item[trendType.value.id])))
@@ -38,12 +38,6 @@ const trendTotal = computed(() => data.value.trend.reduce((total, item) => total
 const timeFormat = new Intl.DateTimeFormat('zh-CN', {
   timeZone: 'Asia/Shanghai', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
 })
-const shortcuts: { name: string; icon: typeof UsersRound; to: RouteLocationRaw }[] = [
-  { name: '管理成员', icon: UsersRound, to: { name: 'admin-members' } },
-  { name: '分配能力', icon: ShieldCheck, to: { name: 'admin-workbenches' } },
-  { name: '系统接入', icon: Cpu, to: { name: 'admin-connections' } },
-  { name: '新建 AI 员工', icon: Bot, to: { name: 'employee-management', query: { from: 'admin', create: '1' } } },
-]
 
 function filterBy(key: 'period' | 'department', value: string) {
   void router.replace({ query: { ...route.query, [key]: value || undefined, metric: undefined, record: undefined } })
@@ -71,9 +65,15 @@ function statusTone(status: string) {
 </script>
 
 <template>
-  <section class="page-surface overview-page" aria-label="平台概览">
-    <template v-if="organization.isAdmin">
-      <header class="page-controls page-toolbar page-tab-toolbar">
+  <section class="page-surface page-with-control-inset overview-page" aria-labelledby="overview-title">
+    <header class="page-controls">
+      <div class="page-title-row">
+        <h1 id="overview-title">运行总览</h1>
+        <div v-if="organization.canViewRuns" class="page-toolbar-controls">
+          <el-button :icon="RefreshCw" @click="overview.refresh">刷新</el-button>
+        </div>
+      </div>
+      <div v-if="organization.canViewRuns" class="page-toolbar page-tab-toolbar">
         <div class="page-toolbar-filters">
           <el-select :model-value="period" aria-label="统计时间" class="period-filter" @update:model-value="filterBy('period', $event)">
             <el-option v-for="item in periods" :key="item.value" :value="item.value" :label="item.label" />
@@ -86,13 +86,35 @@ function statusTone(status: string) {
         <div class="page-toolbar-controls">
           <span class="demo-mark">模拟数据</span>
           <time class="refresh-time" :datetime="overview.refreshedAt">更新于 {{ formatTime(overview.refreshedAt) }}</time>
-          <el-button :icon="RefreshCw" @click="overview.refresh">刷新</el-button>
         </div>
-      </header>
-
+      </div>
+    </header>
+    <template v-if="organization.canViewRuns">
       <div class="page-body overview-body">
+        <section class="current-attention" aria-labelledby="current-attention-title">
+          <header class="section-heading">
+            <h2 id="current-attention-title">当前需关注 <span class="count-badge">{{ data.details.issues.length }}</span></h2>
+            <span class="scope-note">全组织当前依赖 · 按问题归并</span>
+          </header>
+          <ul v-if="data.details.issues.length" class="attention-list">
+            <li v-for="item in data.details.issues" :key="item.id">
+              <RouterLink :to="item.to ?? metricLocation('issues', item.id)">
+                <CircleAlert :size="16" :class="item.severity" aria-hidden="true" />
+                <span class="attention-copy">
+                  <strong>{{ item.title }}</strong>
+                  <span class="attention-meta">
+                    <small>{{ item.subtitle }}</small>
+                    <small>{{ item.related ? item.related.length ? '影响 ' + item.related.length + ' 项启用能力' : '暂无启用能力受影响' : '进入能力详情核对依赖' }}</small>
+                  </span>
+                </span>
+                <el-tag :type="item.severity === 'danger' ? 'danger' : 'warning'" size="small">{{ item.value }}</el-tag>
+              </RouterLink>
+            </li>
+          </ul>
+          <p v-else class="attention-empty muted">当前没有能力或依赖异常。</p>
+        </section>
         <section class="metric-grid" aria-label="核心指标">
-          <RouterLink v-for="metric in data.metrics" :key="metric.id" class="metric-card"
+          <RouterLink v-for="metric in data.metrics" :key="metric.id" class="metric-link"
             :class="'metric-' + metric.id" :to="metricLocation(metric.id)" :aria-label="'查看' + metric.label + '明细'">
             <div class="metric-heading">
               <span class="metric-icon"><component :is="metricIcons[metric.id]" :size="17" aria-hidden="true" /></span>
@@ -104,7 +126,7 @@ function statusTone(status: string) {
         </section>
 
         <div class="overview-columns">
-          <section class="panel dashboard-panel trend-panel" aria-labelledby="usage-trend-title">
+          <section class="overview-panel" aria-labelledby="usage-trend-title">
             <header class="section-heading">
               <h2 id="usage-trend-title">使用趋势</h2>
               <span class="muted">{{ periods.find(item => item.value === period)?.label }}</span>
@@ -131,27 +153,10 @@ function statusTone(status: string) {
             </div>
           </section>
 
-          <section class="panel dashboard-panel" aria-labelledby="management-pending-title">
-            <header class="section-heading">
-              <h2 id="management-pending-title">待管理事项 <span v-if="data.pending.length" class="count-badge">{{ data.pending.length }}</span></h2>
-              <span class="scope-note">全组织当前状态</span>
-            </header>
-            <ul v-if="data.pending.length" class="pending-list">
-              <li v-for="item in data.pending" :key="item.id">
-                <RouterLink class="pending-link" :to="item.to">
-                  <span class="issue-dot" :class="item.tone" aria-hidden="true" />
-                  <div><strong>{{ item.title }}</strong><p>{{ item.detail }}</p></div>
-                  <ChevronRight :size="14" aria-hidden="true" />
-                </RouterLink>
-              </li>
-            </ul>
-            <div v-else class="compact-empty"><Check :size="22" aria-hidden="true" /><p>当前没有待管理事项</p></div>
-          </section>
-
-          <section class="panel dashboard-panel recent-panel" aria-labelledby="recent-runs-title">
+          <section class="overview-panel" aria-labelledby="recent-runs-title">
             <header class="section-heading">
               <h2 id="recent-runs-title">最近运行</h2>
-              <RouterLink :to="metricLocation('tasks')" class="text-link">查看全部 <ArrowRight :size="14" aria-hidden="true" /></RouterLink>
+              <RouterLink :to="{ name: 'admin-activity', query: { period, department: departmentId || undefined } }" class="text-link">查看全部 <ArrowRight :size="14" aria-hidden="true" /></RouterLink>
             </header>
             <ul v-if="data.runs.length" class="run-list" aria-label="最近运行">
               <li v-for="item in data.runs.slice(0, 5)" :key="item.id">
@@ -169,63 +174,10 @@ function statusTone(status: string) {
             <div v-else class="compact-empty"><Clock3 :size="24" aria-hidden="true" /><p>该范围内暂无运行记录</p></div>
           </section>
 
-          <section class="panel dashboard-panel" aria-labelledby="platform-health-title">
-            <header class="section-heading">
-              <h2 id="platform-health-title">平台状态</h2><span class="scope-note">全组织当前状态</span>
-            </header>
-            <ul class="health-list">
-              <li v-for="item in data.health" :key="item.id">
-                <component :is="item.to ? 'RouterLink' : 'div'" :to="item.to" class="health-row">
-                  <div><strong>{{ item.name }}</strong><span>{{ item.detail }}</span></div>
-                  <span class="health-status" :class="item.tone"><i aria-hidden="true" />{{ item.status }}</span>
-                </component>
-              </li>
-            </ul>
-          </section>
-        </div>
-
-        <section class="panel dashboard-panel" aria-labelledby="resource-summary-title">
-          <header class="section-heading">
-            <h2 id="resource-summary-title"><Boxes :size="17" aria-hidden="true" />能力与资源</h2><span class="scope-note">全组织当前状态</span>
-          </header>
-          <div class="asset-grid">
-            <RouterLink v-for="item in data.assets" :key="item.id" class="asset-link" :to="item.to">
-              <span>{{ item.name }}<ChevronRight :size="13" aria-hidden="true" /></span>
-              <strong>{{ item.total }}</strong>
-              <small>启用 {{ item.enabled }}<span v-if="item.issues"> · 异常 {{ item.issues }}</span></small>
-            </RouterLink>
-          </div>
-        </section>
-
-        <div class="overview-columns bottom-columns">
-          <section class="panel dashboard-panel" aria-labelledby="recent-changes-title">
-            <header class="section-heading">
-              <h2 id="recent-changes-title">最近管理变更</h2>
-              <RouterLink :to="{ name: 'admin-changes' }" class="text-link">查看全部 <ArrowRight :size="14" aria-hidden="true" /></RouterLink>
-            </header>
-            <ul v-if="data.changes.length" class="change-list">
-              <li v-for="item in data.changes.slice(0, 3)" :key="item.id">
-                <RouterLink :to="item.to">
-                  <Activity :size="15" aria-hidden="true" />
-                  <span><strong>{{ item.title }}</strong><small>{{ item.detail }}</small></span>
-                  <time :datetime="item.at">{{ formatTime(item.at) }}</time>
-                </RouterLink>
-              </li>
-            </ul>
-            <p v-else class="muted">暂无管理变更</p>
-          </section>
-          <section class="panel dashboard-panel" aria-labelledby="overview-shortcuts-title">
-            <header class="section-heading"><h2 id="overview-shortcuts-title">快捷操作</h2></header>
-            <div class="shortcut-grid">
-              <RouterLink v-for="item in shortcuts" :key="item.name" :to="item.to">
-                <component :is="item.icon" :size="17" aria-hidden="true" /><span>{{ item.name }}</span><ChevronRight :size="13" aria-hidden="true" />
-              </RouterLink>
-            </div>
-          </section>
         </div>
       </div>
 
-      <ElDrawer v-model="drawerOpen" :title="currentRecord ? '运行详情' : (currentMetric?.label ?? '') + '明细'"
+      <ElDrawer v-model="drawerOpen" :title="currentRecord ? '记录详情' : (currentMetric?.label ?? '') + '明细'"
         size="min(580px, 100vw)" append-to-body destroy-on-close>
         <template v-if="currentMetric">
           <template v-if="currentRecord">
@@ -235,7 +187,8 @@ function statusTone(status: string) {
             <dl class="record-facts">
               <div v-for="fact in currentRecord.facts" :key="fact.label"><dt>{{ fact.label }}</dt><dd>{{ fact.value }}</dd></div>
             </dl>
-            <RouterLink v-if="currentRecord.to" class="el-button" :to="currentRecord.to">查看管理对象</RouterLink>
+            <div v-if="currentRecord.related?.length" class="issue-related"><h3>受影响的启用能力</h3><RouterLink v-for="item in currentRecord.related" :key="item.id" :to="item.to">{{ item.title }}</RouterLink></div>
+            <RouterLink v-if="currentRecord.to" class="el-button" :to="currentRecord.to">{{ currentMetric.id === 'issues' ? '查看依赖详情' : '查看管理对象' }}</RouterLink>
           </template>
           <template v-else>
             <div class="detail-summary"><strong>{{ currentMetric.value }}</strong><span>{{ currentMetric.detail }}</span></div>
@@ -253,48 +206,78 @@ function statusTone(status: string) {
         </template>
       </ElDrawer>
     </template>
-    <el-empty v-else description="当前账号没有组织概览查看权限" />
+    <el-empty v-else description="当前账号没有运行查看权限" />
   </section>
 </template>
 
 <style scoped>
-.overview-page { container-type: inline-size; }
+.overview-page {
+  --overview-warning-text: #805000;
+  --overview-warning-fill: #fcf3e4;
+  --overview-danger-text: #a1332b;
+  --overview-danger-fill: #fff0ed;
+  container-type: inline-size;
+}
+.issue-related { display: grid; gap: 10px; margin: 16px 0; font-size: 14px; }
+.issue-related h3 { font-size: 14px; }
+.issue-related a { color: var(--accent); }
+.current-attention { min-width: 0; padding: 10px 12px 6px; border-radius: var(--radius-surface); background: var(--surface-muted); }
+.current-attention .section-heading { margin-bottom: 3px; flex-wrap: wrap; }
+.attention-list { list-style: none; margin: 0; padding: 0; }
+.attention-list li + li { border-top: 1px solid var(--line); }
+.attention-list a {
+  display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: start;
+  gap: 4px 8px; padding: 7px 0; font-size: 13px; line-height: 1.45;
+}
+.attention-list a:hover strong { color: var(--accent); }
+.attention-list a > svg { color: var(--overview-warning-text); margin-top: 2px; }
+.attention-list svg.danger { color: var(--overview-danger-text); }
+.attention-copy { min-width: 0; overflow-wrap: anywhere; }
+.attention-meta { display: flex; flex-wrap: wrap; gap: 2px 12px; margin-top: 2px; }
+.attention-meta small { color: var(--muted); font-size: 12px; }
+.attention-list :deep(.el-tag) { justify-self: start; border-radius: var(--radius-pill); }
+.attention-list :deep(.el-tag--warning) { color: var(--overview-warning-text); }
+.attention-list :deep(.el-tag--danger) { color: var(--overview-danger-text); }
+.attention-empty { margin: 7px 0; font-size: 13px; }
 .period-filter { width: 128px; }
 .department-filter { width: 160px; }
-.demo-mark { padding: 3px 7px; border-radius: 5px; background: #eaf0fd; color: #5b70a5; font-size: 11px; white-space: nowrap; }
+.demo-mark { padding: 3px 7px; border-radius: var(--radius-pill); background: var(--surface-muted); color: var(--muted); font-size: 11px; white-space: nowrap; }
 .refresh-time { color: var(--muted); font-size: 12px; }
-.overview-body { display: grid; gap: 12px; }
-.metric-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
-.metric-card { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 14px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
-.metric-card:hover { border-color: #bacbf6; background: #fafbff; }
-.metric-heading { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; }
+.overview-body { display: grid; gap: 16px; }
+.metric-grid {
+  display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 1px;
+  background: var(--line);
+}
+.metric-link { display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 11px 12px; background: var(--surface); }
+.metric-link:hover { background: var(--surface-muted); }
+.metric-link:focus-visible { outline-offset: -3px; }
+.metric-heading { display: flex; align-items: center; gap: 7px; color: var(--text-secondary); font-size: 12px; }
 .metric-heading > span:nth-child(2) { flex: 1; min-width: 0; }
-.metric-icon { display: grid; flex: none; place-items: center; width: 29px; height: 29px; border-radius: 8px; background: var(--soft); color: var(--accent); }
-.metric-issues .metric-icon { color: #bd8030; background: #fff4e3; }
-.metric-arrow { flex: none; margin-inline-start: auto; color: #9ca7ba; }
-.metric-value { color: var(--text); font-size: clamp(23px, 2.6cqi, 31px); font-weight: 680; line-height: 1.2; font-variant-numeric: tabular-nums; }
+.metric-icon { display: grid; flex: none; place-items: center; color: var(--muted); }
+.metric-failures .metric-icon { color: var(--overview-danger-text); }
+.metric-arrow { flex: none; margin-inline-start: auto; color: var(--muted); }
+.metric-value { color: var(--text); font-size: clamp(22px, 2.8cqi, 32px); font-weight: 650; line-height: 1.2; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .metric-note { margin-top: auto; color: var(--muted); font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
-.overview-columns { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 12px; align-items: start; }
-.dashboard-panel { min-width: 0; padding: 14px; border-radius: 10px; }
-.section-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-height: 22px; margin-bottom: 12px; }
-.section-heading h2 { display: flex; align-items: center; gap: 7px; margin: 0; color: var(--text); font-size: 14px; font-weight: 650; }
+.overview-columns { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 20px; align-items: start; }
+.overview-panel { min-width: 0; }
+.section-heading { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-height: 22px; margin-bottom: 8px; }
+.section-heading h2 { display: flex; align-items: center; gap: 7px; margin: 0; color: var(--text); font-size: 15px; font-weight: 650; }
 .section-heading > .muted, .scope-note { color: var(--muted); font-size: 11px; white-space: nowrap; }
 .text-link { display: inline-flex; align-items: center; gap: 4px; color: var(--accent); font-size: 12px; white-space: nowrap; }
-.count-badge { min-width: 19px; padding: 1px 5px; border-radius: 5px; background: #fff2e1; color: #a96925; font-size: 11px; text-align: center; }
+.count-badge { min-width: 19px; padding: 1px 5px; border-radius: var(--radius-pill); background: var(--overview-warning-fill); color: var(--overview-warning-text); font-size: 11px; text-align: center; }
 .trend-toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
 .trend-total { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-.trend-chart { position: relative; display: flex; align-items: stretch; gap: 10px; height: 188px; margin-top: 16px; }
+.trend-chart { position: relative; display: flex; align-items: stretch; gap: 10px; height: 164px; margin-top: 14px; }
 .chart-grid { position: absolute; inset: 21px 0 22px; display: flex; flex-direction: column; justify-content: space-between; pointer-events: none; }
-.chart-grid span { border-top: 1px dashed #e9edf4; }
+.chart-grid span { border-top: 1px solid var(--line); }
 .chart-column { position: relative; display: flex; flex: 1; flex-direction: column; align-items: center; gap: 6px; min-width: 0; }
-.chart-value, .chart-label { color: var(--muted); font-size: 10px; line-height: 1.3; white-space: nowrap; }
+.chart-value, .chart-label { color: var(--muted); font-size: 11px; line-height: 1.3; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.chart-label { text-align: center; }
 .chart-bar-track { display: flex; flex: 1; align-items: flex-end; justify-content: center; width: 100%; min-height: 0; }
-.chart-bar { width: min(34px, 80%); border-radius: 5px 5px 0 0; background: #6486e9; }
-.chart-bar.series-workbench { background: #8d7bc4; }
-.chart-bar.series-tasks { background: #52a69a; }
+.chart-bar { width: min(34px, 80%); border-radius: 4px 4px 0 0; background: var(--accent); }
 .pending-list, .run-list, .health-list, .change-list, .metric-details { list-style: none; padding: 0; margin: 0; }
 .pending-list { max-height: 254px; overflow-y: auto; scrollbar-width: thin; padding-inline: 2px; }
-.pending-list li + li, .run-list li + li, .health-list li + li, .change-list li + li, .metric-details li + li { border-top: 1px solid #edf0f5; }
+.pending-list li + li, .run-list li + li, .health-list li + li, .change-list li + li, .metric-details li + li { border-top: 1px solid var(--line); }
 .pending-link { display: flex; align-items: flex-start; gap: 9px; padding: 11px 0; }
 .pending-link div { flex: 1; min-width: 0; }
 .pending-link strong, .run-copy strong, .health-row strong, .change-list strong { font-size: 13px; font-weight: 560; overflow-wrap: anywhere; }
@@ -303,17 +286,17 @@ function statusTone(status: string) {
 .pending-link:hover strong, .run-link:hover strong, .change-list a:hover strong { color: var(--accent); }
 .issue-dot { flex: none; width: 7px; height: 7px; margin-top: 6px; border-radius: 50%; background: #c08a40; }
 .issue-dot.danger { background: #cd6b63; }
-.run-link { display: flex; align-items: center; gap: 9px; padding: 11px 0; }
-.run-icon { display: grid; flex: none; place-items: center; width: 30px; height: 30px; border-radius: 8px; background: var(--soft); color: #6175a3; }
+.run-link { display: flex; align-items: center; gap: 9px; padding: 7px 0; }
+.run-icon { display: grid; flex: none; place-items: center; width: 30px; height: 30px; border-radius: var(--radius-surface); background: var(--surface-muted); color: var(--text-secondary); }
 .run-copy { display: grid; flex: 1; gap: 5px; min-width: 0; }
 .run-copy > span { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
 .run-trailing { display: grid; flex: none; justify-items: end; gap: 5px; }
 .run-trailing time, .change-list time { color: var(--muted); font-size: 10px; }
-.row-arrow { flex: none; color: #98a3b5; }
-.status-label { padding: 2px 6px; border-radius: 5px; background: #edf2fe; color: #4c70be; font-size: 11px; }
-.status-label.success { color: #43836c; background: #ebf6f0; }
-.status-label.warning { color: #a37433; background: #fcf3e4; }
-.status-label.danger { color: #b8645c; background: #fff0ed; }
+.row-arrow { flex: none; color: var(--muted); }
+.status-label { padding: 2px 6px; border-radius: var(--radius-pill); background: var(--soft); color: var(--accent-active); font-size: 11px; }
+.status-label.success { color: #296241; background: #ebf6f0; }
+.status-label.warning { color: var(--overview-warning-text); background: var(--overview-warning-fill); }
+.status-label.danger { color: var(--overview-danger-text); background: var(--overview-danger-fill); }
 .health-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 9px 0; }
 .health-row > div { display: grid; gap: 4px; min-width: 0; }
 .health-row > div > span { color: var(--muted); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
@@ -364,15 +347,21 @@ a.metric-detail-row:hover { color: var(--accent); }
   .overview-columns { grid-template-columns: minmax(0, 1fr); }
   .refresh-time { display: none; }
 }
+@container (max-width: 480px) {
+  .page-tab-toolbar { column-gap: 6px; }
+  .page-toolbar-filters { display: grid; flex: 1; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; max-width: 294px; }
+  .period-filter, .department-filter { width: 100%; }
+  .page-toolbar-filters :deep(.el-select__wrapper) { gap: 4px; padding-inline: 7px; }
+}
 @container (max-width: 420px) {
   .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .department-filter { width: 126px; }
-  .period-filter { width: 112px; }
-  .dashboard-panel { padding: 11px; }
+  .demo-mark { padding-inline: 4px; }
+  .attention-list a { grid-template-columns: auto minmax(0, 1fr); }
+  .attention-list :deep(.el-tag) { grid-column: 2; }
+  .metric-link { padding-inline: 9px; }
   .metric-heading { gap: 5px; font-size: 11px; }
-  .metric-icon { width: 24px; height: 26px; }
   .metric-arrow { display: none; }
-  .chart-label { font-size: 9px; }
+  .chart-label { font-size: 10px; white-space: normal; }
   .trend-chart { gap: 5px; }
   .change-list a { flex-wrap: wrap; }
   .change-list time { margin-inline-start: 23px; }

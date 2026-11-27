@@ -224,7 +224,6 @@ function personName(userId?: string) {
       <div class="page-toolbar-controls">
         <span class="run-count muted" aria-live="polite">{{ visibleRuns.length }} 项任务</span>
         <el-button v-if="hasFilters" text @click="clearFilters">清除筛选</el-button>
-        <slot name="actions" />
       </div>
     </div>
     <template v-if="visibleRuns.length">
@@ -327,7 +326,7 @@ function personName(userId?: string) {
   display: grid; grid-template-columns: minmax(130px, 1.45fr) minmax(76px, .75fr) 65px 70px minmax(105px, 1fr) 15px;
   align-items: center; gap: 10px; padding: 10px 13px;
 }
-.run-labels { background: var(--canvas); color: var(--muted); font-size: 12px; font-weight: 650; border-top: 1px solid var(--line); }
+.run-labels { margin-block-start: var(--page-body-start); background: var(--canvas); color: var(--muted); font-size: 12px; font-weight: 650; border-top: 1px solid var(--line); }
 .run-list li { border-top: 1px solid var(--line); }
 .run-row { color: var(--text); font-size: 13px; }
 .run-row:hover { background: var(--soft); }

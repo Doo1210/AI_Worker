@@ -10,7 +10,7 @@ defineProps<{
     collaboratorCount: number
     fileCount: number
     updatedAt: string
-    permission?: string
+    permission: string
     isOwner: boolean
     to: RouteLocationRaw
   }[]
@@ -46,24 +46,23 @@ function formatUpdatedAt(value: string) {
 </script>
 
 <template>
-  <ul class="workspace-card-grid" role="list" aria-label="共享工作空间">
+  <ul class="workspace-card-grid" role="list" aria-label="共享空间">
     <li v-for="card in cards" :key="card.id">
       <RouterLink
         :to="card.to"
         class="workspace-card"
         :aria-labelledby="'shared-space-name-' + card.id"
-        :aria-describedby="'shared-space-owner-' + card.id + ' shared-space-stats-' + card.id
-          + (card.permission ? ' shared-space-permission-' + card.id : '')"
+        :aria-describedby="`shared-space-owner-${card.id} shared-space-stats-${card.id} shared-space-permission-${card.id}`"
       >
         <div class="card-heading">
           <span class="card-icon"><Folder :size="17" aria-hidden="true" /></span>
           <div class="card-title">
             <span class="card-name" :id="'shared-space-name-' + card.id" :title="card.name">{{ card.name }}</span>
+            <span class="card-permission" :id="'shared-space-permission-' + card.id" title="我的权限">
+              <span class="visually-hidden">我的权限 </span>{{ card.permission }}
+            </span>
             <span class="card-owner" :id="'shared-space-owner-' + card.id" :title="card.ownerName">
               <span class="visually-hidden">所有人 </span>{{ card.ownerName }}
-            </span>
-            <span v-if="card.permission" class="card-permission" :id="'shared-space-permission-' + card.id" title="我的权限">
-              <span class="visually-hidden">我的权限 </span>{{ card.permission }}
             </span>
           </div>
         </div>
@@ -102,10 +101,10 @@ function formatUpdatedAt(value: string) {
 <style scoped>
 .workspace-card-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(278px, 100%), 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
   margin: 0;
-  padding: 16px;
+  padding: var(--page-body-start, 16px) var(--page-control-inline, 16px) 16px;
   list-style: none;
 }
 .workspace-card-grid > li { --card-menu-size: 28px; position: relative; min-width: 0; }
@@ -115,20 +114,20 @@ function formatUpdatedAt(value: string) {
   gap: 8px;
   height: 100%;
   min-width: 0;
-  padding: 9px 10px;
+  padding: 11px 12px;
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: var(--radius-surface);
   background: var(--surface);
   color: var(--text);
 }
 .workspace-card:hover {
-  border-color: var(--el-color-primary-light-7);
-  background: #fafbff;
+  border-color: var(--line-strong);
+  background: var(--surface-muted);
 }
 .workspace-card:focus-visible { outline-offset: 2px; }
 .card-heading {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   min-width: 0;
 }
@@ -138,11 +137,12 @@ function formatUpdatedAt(value: string) {
   width: 30px;
   height: 30px;
   place-items: center;
-  border-radius: 7px;
-  background: #fff2d6;
-  color: #9a621a;
+  border-radius: var(--radius-surface);
+  background: var(--surface-muted);
+  color: var(--text-secondary);
 }
-.card-icon svg { fill: #ffdf97; stroke-width: 1.7; }
+.workspace-card:hover .card-icon { background: var(--surface-hover); }
+.card-icon svg { stroke-width: 1.7; }
 .card-title {
   display: grid;
   flex: 1;
@@ -150,18 +150,16 @@ function formatUpdatedAt(value: string) {
   align-items: center;
   gap: 2px 8px;
   min-width: 0;
+  padding-inline-end: calc(var(--card-menu-size) + 3px);
 }
 .card-name {
-  grid-column: 1 / -1;
-  margin-inline-end: calc(var(--card-menu-size) + 6px);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 14px;
+  overflow-wrap: anywhere;
+  font-size: 15px;
   font-weight: 650;
   line-height: 20px;
 }
 .card-owner {
+  grid-column: 1 / -1;
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -171,10 +169,12 @@ function formatUpdatedAt(value: string) {
   line-height: 16px;
 }
 .card-permission {
-  padding: 1px 5px;
-  border-radius: 5px;
-  background: var(--soft);
-  color: var(--accent);
+  align-self: start;
+  margin-top: 1px;
+  padding: 2px 7px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-hover);
+  color: var(--text-secondary);
   font-size: 11px;
   line-height: 14px;
   white-space: nowrap;
@@ -184,7 +184,7 @@ function formatUpdatedAt(value: string) {
   align-items: center;
   gap: 12px;
   margin-top: auto;
-  padding-top: 5px;
+  padding-top: 7px;
   border-top: 1px solid var(--line);
   color: var(--muted);
   font-size: 12px;
@@ -195,7 +195,7 @@ function formatUpdatedAt(value: string) {
 .card-count svg { flex: none; }
 .card-updated { margin-inline-start: auto; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.card-menu { position: absolute; inset: 3px 8px auto auto; }
+.card-menu { position: absolute; inset-block-start: 7px; inset-inline-end: 9px; }
 .card-menu-trigger {
   display: grid;
   place-items: center;
@@ -218,7 +218,7 @@ function formatUpdatedAt(value: string) {
     pointer-events: auto;
   }
 }
-@container (max-width: 380px) {
-  .workspace-card-grid { gap: 8px; padding: 10px; }
-}
+@container (max-width: 920px) { .workspace-card-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@container (max-width: 580px) { .workspace-card-grid { grid-template-columns: minmax(0, 1fr); } }
+@container (max-width: 380px) { .workspace-card-grid { gap: 8px; padding-block-end: 12px; } }
 </style>

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import PageHeader from '@/components/PageHeader.vue'
+import { recordWorkbenchOperation } from '@/workbenchUsage'
 import { computed, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -11,7 +13,7 @@ import {
   type TenderCategory, type TenderQuery, type TenderRules,
 } from '@/stores/tenderSample'
 
-const props = defineProps<{ userId: string }>()
+const props = defineProps<{ userId: string; pageTitle: string }>()
 const route = useRoute()
 const router = useRouter()
 const scenario = useScenarioTaskStore()
@@ -223,6 +225,7 @@ function saveReview() {
   if (!item || !draftDecision.value || !eligible.value.includes(item)) return
   undo.value = { id: item.id, previous: task.value.reviews[item.id] }
   task.value.reviews[item.id] = { decision: draftDecision.value, note: draftNote.value.trim() }
+  recordWorkbenchOperation('workbench-tender', '保存机会复核意见')
   ElMessage.success('复核意见已保存')
 }
 
@@ -275,33 +278,32 @@ function downloadCsv() {
 
 <template>
   <div class="scene-layout tender-workbench">
-    <header class="page-controls">
+    <PageHeader :title="pageTitle">
+      <template v-if="stage === 'search' || stage === 'report' || (stage === 'review' && undo)" #actions>
+        <button v-if="stage === 'search'" type="submit" form="tender-query-form" class="scene-primary"><Search :size="14" aria-hidden="true" />查询机会</button>
+        <button v-else-if="stage === 'report'" type="button" class="scene-primary" :disabled="!task.rules || !records.length" @click="makeReport">生成报告</button>
+        <button v-else-if="stage === 'review' && undo" type="button" class="scene-secondary" @click="undoReview"><Undo2 :size="14" aria-hidden="true" />撤销上次复核</button>
+      </template>
       <nav class="page-tabs" aria-label="招投标流程">
         <button v-for="item in stages" :key="item.id" class="page-tab" type="button"
           :aria-current="stage === item.id ? 'step' : undefined" @click="stage = item.id">
           <component :is="item.icon" :size="16" aria-hidden="true" />{{ item.label }}
         </button>
       </nav>
-    </header>
+      <form v-if="stage === 'search'" id="tender-query-form" class="page-toolbar page-tab-toolbar tender-query" @submit.prevent="runQuery">
+        <div class="page-toolbar-filters">
+          <label class="tender-keyword">关键词<input v-model="query.keyword" class="filter-field" placeholder="项目名称、单位或编号" /></label>
+          <label>机会类型<select v-model="query.type" class="filter-field"><option value="">全部类型</option><option>招标公告</option><option>拟建项目</option></select></label>
+          <label>地区<select v-model="query.region" class="filter-field"><option value="">全部地区</option><option v-for="region in regions" :key="region">{{ region }}</option></select></label>
+          <label>发布起始日期<input v-model="query.from" class="filter-field" type="date" /></label>
+          <label>发布结束日期<input v-model="query.to" class="filter-field" type="date" /></label>
+        </div>
+        <span class="scene-chip">示例数据</span>
+      </form>
+    </PageHeader>
 
     <div class="scene-columns page-body">
       <div class="scene-main">
-        <form v-if="stage === 'search'" class="scene-panel scene-pad tender-search" @submit.prevent="runQuery">
-          <div class="scene-section-heading"><h2>商机检索</h2><span class="scene-chip">示例数据</span></div>
-          <div class="tender-query page-toolbar">
-            <div class="page-toolbar-filters">
-              <label class="tender-keyword">关键词<input v-model="query.keyword" class="filter-field" placeholder="项目名称、单位或编号" /></label>
-              <label>机会类型<select v-model="query.type" class="filter-field"><option value="">全部类型</option><option>招标公告</option><option>拟建项目</option></select></label>
-              <label>地区<select v-model="query.region" class="filter-field"><option value="">全部地区</option><option v-for="region in regions" :key="region">{{ region }}</option></select></label>
-              <label>发布起始日期<input v-model="query.from" class="filter-field" type="date" /></label>
-              <label>发布结束日期<input v-model="query.to" class="filter-field" type="date" /></label>
-            </div>
-            <div class="page-toolbar-controls">
-              <button type="submit" class="scene-primary"><Search :size="14" aria-hidden="true" />查询机会</button>
-            </div>
-          </div>
-        </form>
-
         <section v-if="stage === 'rules'" class="scene-panel scene-pad">
           <div class="scene-section-heading"><h2>初筛条件</h2><span v-if="task.rules" class="scene-chip good">已有生效规则</span></div>
           <form class="tender-rules" @submit.prevent="preview">
@@ -328,7 +330,6 @@ function downloadCsv() {
           </dl>
           <div class="scene-form-footer">
             <p>{{ !task.rules ? '请先确认初筛规则。' : pendingCount ? '还有机会待复核，报告将标记为部分交付。' : '当前范围内无待复核机会。' }}</p>
-            <button type="button" class="scene-primary" :disabled="!task.rules || !records.length" @click="makeReport">生成报告</button>
           </div>
         </section>
 
@@ -343,9 +344,6 @@ function downloadCsv() {
                 <button type="button" class="page-segment" :aria-pressed="reviewFilter === 'pending'" @click="reviewFilter = 'pending'">待复核 {{ pendingCount }}</button>
                 <button type="button" class="page-segment" :aria-pressed="reviewFilter === 'done'" @click="reviewFilter = 'done'">已复核 {{ reviewedCount }}</button>
               </div>
-            </div>
-            <div v-if="stage === 'review' && undo" class="page-toolbar-controls">
-              <button type="button" class="scene-secondary" @click="undoReview"><Undo2 :size="14" aria-hidden="true" />撤销上次复核</button>
             </div>
           </div>
           <p v-if="stage === 'search' && linkedOutsideQuery" class="tender-linked muted">从任务打开的机会 {{ linkedOutsideQuery.id }} 已置于列表顶部。</p>

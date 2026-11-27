@@ -27,7 +27,8 @@ const preview = computed(() => members.value.map(id => {
     && !(managers.value.length && role.kind === 'management')), ...chosen.value]
   return { member: platform.users.find(member => member.id === id),
     added: next.filter(role => !current.some(item => item.id === role.id)).map(role => role.name),
-    removed: current.filter(role => !next.some(item => item.id === role.id)).map(role => role.name) }
+    removed: current.filter(role => !next.some(item => item.id === role.id)).map(role => role.name),
+    grants: organization.previewRoleGrants(id, next.map(role => role.id), selectedRoles.value) }
 }))
 const valid = computed(() => !!members.value.length && managers.value.length <= 1
   && (!departmentManager.value || scope.value.length > 0)
@@ -98,6 +99,7 @@ function save() {
           <span v-if="item.removed.length">移除：{{ item.removed.join('、') }}</span>
           <span v-if="!item.added.length && !item.removed.length">保留所选角色，按当前角色配置同步权限。</span>
         </div>
+        <template v-for="item in preview" :key="'grants-' + item.member?.id"><div v-if="item.grants" class="preview-member"><b>{{ item.member?.name }} · 使用权变化</b><span>新增：{{ item.grants.added.join('、') || '无' }}</span><span>收回：{{ item.grants.removed.join('、') || '无' }}</span><span>继续有效：{{ item.grants.retained.join('、') || '无' }}</span></div></template>
         <p v-if="affectedCapabilities.length">包含 {{ affectedCapabilities.length }} 项使用权限：{{ affectedCapabilities.map(item => item.name).join('、') }}</p>
         <p class="muted">收回角色时保留直接分配和其他角色的有效授权。部门归属与岗位名称单独维护。</p>
       </section>

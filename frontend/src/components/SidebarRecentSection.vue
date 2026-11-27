@@ -8,6 +8,7 @@ const route = useRoute()
 const panelId = useId()
 const trigger = ref<HTMLButtonElement>()
 const panel = ref<HTMLElement>()
+const overlays = ref<HTMLElement>()
 const open = ref(false)
 let pinned = false
 let closeTimer: ReturnType<typeof setTimeout> | undefined
@@ -36,7 +37,7 @@ function toggle(event: MouseEvent) {
   pinned = true
   show()
   if (event.detail === 0) {
-    void nextTick(() => (panel.value?.querySelector('a') ?? panel.value)?.focus())
+    void nextTick(() => (panel.value?.querySelector<HTMLElement>('button, a') ?? panel.value)?.focus())
   }
 }
 
@@ -46,7 +47,7 @@ function onOutsidePointerDown(event: PointerEvent) {
 }
 
 function onEscape(event: KeyboardEvent) {
-  if (event.key !== 'Escape' || !open.value) return
+  if (event.key !== 'Escape' || event.defaultPrevented || !open.value) return
   if (panel.value?.contains(document.activeElement)) trigger.value?.focus()
   close()
 }
@@ -92,17 +93,18 @@ onUnmounted(() => {
         <slot name="icon" />
       </button>
       <template #content>
-        <div :id="panelId" ref="panel" class="sidebar-recent-panel" tabindex="-1" @mouseenter="show" @mouseleave="scheduleClose">
-          <div class="sidebar-label">{{ label }}</div>
+        <div :id="panelId" ref="panel" class="sidebar-recent-panel" tabindex="-1" @mouseenter="show" @mouseleave="scheduleClose" @pointerdown.capture="pinned = true">
+          <slot name="heading" :append-to="overlays"><div class="sidebar-label">{{ label }}</div></slot>
           <div class="sidebar-recent-scroll">
-            <slot :close="close" />
+            <slot :close="close" :append-to="overlays" />
           </div>
+          <div ref="overlays"></div>
         </div>
       </template>
     </ElTooltip>
     <template v-else>
-      <div class="sidebar-label">{{ label }}</div>
-      <slot :close="close" />
+      <slot name="heading" :append-to="undefined"><div class="sidebar-label">{{ label }}</div></slot>
+      <slot :close="close" :append-to="undefined" />
     </template>
   </div>
 </template>

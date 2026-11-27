@@ -3,8 +3,10 @@ import { computed, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { usePlatformStore, type Message } from '@/stores/platform'
+import { fileCenterName, workspaceFolderPath, type ResolvedWorkspaceDirectory } from '@/workspaceDirectory'
+import ConversationMarkdown from './ConversationMarkdown.vue'
 
-const props = defineProps<{ conversationId: string; message?: Message }>()
+const props = defineProps<{ conversationId: string; message?: Message; directory?: ResolvedWorkspaceDirectory }>()
 const open = defineModel<boolean>({ required: true })
 const platform = usePlatformStore()
 const router = useRouter()
@@ -13,19 +15,17 @@ const content = ref('')
 const folderId = ref('')
 const preview = ref(true)
 const error = ref('')
-const saved = computed(() => platform.myFiles.find(file => file.id === 'artifact-' + props.message?.id))
-const sources = computed(() => (props.message?.references ?? []).map(id => platform.myFiles.find(file => file.id === id)?.name ?? '引用文件已不可用'))
+const saved = computed(() => props.directory?.files.find(file => file.id === 'artifact-' + props.message?.id))
+const sources = computed(() => (props.message?.references ?? []).map(id =>
+  props.directory?.files.find(file => file.id === id)?.name ?? '引用文件已不可用'))
 const folders = computed(() => {
-  const byId = new Map(platform.myFolders.map(folder => [folder.id, folder]))
-  return platform.myFolders.map(folder => {
-    const parts: string[] = []
-    const visited = new Set<string>()
-    for (let item = byId.get(folder.id); item && !visited.has(item.id); item = byId.get(item.parentId ?? '')) {
-      parts.unshift(item.name)
-      visited.add(item.id)
-    }
-    return { id: folder.id, path: parts.join(' / ') }
-  }).sort((left, right) => left.path.localeCompare(right.path, 'zh-CN'))
+  const directory = props.directory
+  if (!directory) return []
+  const byId = new Map(directory.folders.map(folder => [folder.id, folder]))
+  return directory.folders.map(folder => ({
+    id: folder.id, name: folder.name, path: [directory.path, ...workspaceFolderPath(byId, folder.id)].join(' / '),
+  }))
+    .sort((left, right) => left.path.localeCompare(right.path, 'zh-CN'))
 })
 
 watch([open, () => props.message, () => platform.currentUser.id], ([visible, message], previous) => {
@@ -36,30 +36,33 @@ watch([open, () => props.message, () => platform.currentUser.id], ([visible, mes
   if (!visible || !message) return
   name.value = saved.value?.name ?? message.artifactName ?? '助理产物.md'
   content.value = saved.value?.content ?? message.artifactContent ?? message.text
-  folderId.value = saved.value?.folderId ?? ''
+  folderId.value = (saved.value ? saved.value.folderId : props.directory?.folderId) ?? ''
   preview.value = true
   error.value = ''
 })
 
 function save() {
-  if (!props.message || !name.value.trim() || !content.value.trim()) return
+  if (!props.directory?.canWrite || !props.message || !name.value.trim() || !content.value.trim()) return
   const id = platform.saveMessageFile(props.conversationId, props.message.id, {
     name: name.value.trim(),
     content: content.value,
     folderId: folderId.value || undefined,
   })
   if (!id) {
-    error.value = '无法保存。请检查文件名是否有效或重复，以及工作空间剩余容量。'
+    error.value = '无法保存。请检查目录权限、文件名及可用存储空间。'
     return
   }
   error.value = ''
-  ElMessage.success('已保存到个人工作空间')
+  ElMessage.success('已保存文件')
 }
 
 function openWorkspace() {
-  if (!saved.value) return
+  if (!saved.value || !props.directory) return
   open.value = false
-  void router.push({ path: '/work/workspace', query: { folder: saved.value.folderId, file: saved.value.id } })
+  void router.push({ path: '/work/workspace', query: {
+    scope: props.directory.spaceId === undefined ? undefined : 'shared', space: props.directory.spaceId,
+    folder: saved.value.folderId, file: saved.value.id,
+  } })
 }
 </script>
 
@@ -73,29 +76,30 @@ function openWorkspace() {
         </ul>
       </div>
       <el-form-item label="文件名" :error="error">
-        <el-input v-model="name" aria-label="产物文件名" maxlength="120" @input="error = ''" />
+        <el-input v-model="name" aria-label="产物文件名" maxlength="120" :readonly="!directory?.canWrite" @input="error = ''" />
       </el-form-item>
       <div class="artifact-editor">
-        <div class="editor-switch" role="group" aria-label="文档模式">
+        <div v-if="directory?.canWrite" class="editor-switch" role="group" aria-label="文档模式">
           <button type="button" :aria-pressed="preview" @click="preview = true">预览</button>
           <button type="button" :aria-pressed="!preview" @click="preview = false">编辑</button>
         </div>
-        <pre v-if="preview" class="artifact-preview" aria-label="文档预览">{{ content }}</pre>
+        <ConversationMarkdown v-if="preview || !directory?.canWrite" class="artifact-preview" aria-label="文档预览" :text="content" />
         <el-input v-else v-model="content" type="textarea" resize="vertical" :rows="10" maxlength="240000"
           aria-label="文档内容" @input="error = ''" />
       </div>
-      <el-form-item label="保存位置">
-        <el-select v-model="folderId" aria-label="保存位置" placeholder="个人工作空间（根目录）" :value-on-clear="''" @change="error = ''">
-          <el-option label="个人工作空间（根目录）" value="" />
-          <el-option v-for="folder in folders" :key="folder.id" :value="folder.id" :label="folder.path" />
+      <el-form-item v-if="directory?.canWrite" label="保存位置">
+        <el-select v-model="folderId" aria-label="保存位置" placeholder="选择保存目录" :empty-values="[null, undefined]" @change="error = ''">
+          <el-option :label="directory.label" :title="directory.path" :value="directory.folderId ?? ''" />
+          <el-option v-for="folder in folders" :key="folder.id" :value="folder.id" :label="folder.name" :title="folder.path" />
         </el-select>
       </el-form-item>
+      <p v-else class="muted">{{ directory ? '当前工作目录仅可查看。' : '当前工作目录不可用。' }}</p>
     </el-form>
     <template #footer>
       <div class="artifact-actions">
-        <el-button v-if="saved" text type="primary" @click="openWorkspace">在工作空间查看</el-button>
+        <el-button v-if="saved" text type="primary" @click="openWorkspace">在{{ fileCenterName }}查看</el-button>
         <el-button @click="open = false">关闭</el-button>
-        <el-button type="primary" :disabled="!name.trim() || !content.trim()" @click="save">{{ saved ? '保存修改' : '保存到工作空间' }}</el-button>
+        <el-button v-if="directory?.canWrite" type="primary" :disabled="!name.trim() || !content.trim()" @click="save">{{ saved ? '保存修改' : '保存文件' }}</el-button>
       </div>
     </template>
   </el-dialog>
@@ -110,7 +114,7 @@ function openWorkspace() {
 .editor-switch { display: flex; width: fit-content; gap: 3px; padding: 2px; margin-bottom: 6px; border: 1px solid var(--line); border-radius: 7px; background: var(--canvas); }
 .editor-switch button { padding: 4px 10px; border: 0; border-radius: 5px; background: transparent; color: var(--muted); }
 .editor-switch button[aria-pressed="true"] { background: var(--soft); color: var(--accent); font-weight: 650; }
-.artifact-preview { min-height: 120px; max-height: 230px; margin: 0; padding: 11px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--canvas); color: var(--text); font: inherit; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+.artifact-preview { min-height: 120px; max-height: 230px; margin: 0; padding: 11px; overflow-y: auto; border: 1px solid var(--line); border-radius: 8px; background: var(--canvas); color: var(--text); }
 .artifact-form .el-select { width: 100%; }
 .artifact-actions { display: flex; justify-content: end; gap: 8px; flex-wrap: wrap; }
 .artifact-actions .el-button { margin-left: 0; }

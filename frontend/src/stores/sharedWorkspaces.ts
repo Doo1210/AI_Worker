@@ -1,5 +1,6 @@
 import { computed, onScopeDispose, shallowRef } from 'vue'
 import { defineStore } from 'pinia'
+import { workspaceFolderTree } from '@/workspaceDirectory'
 import { makeId, nowIso, usePlatformStore, type WorkspaceFile, type WorkspaceFolder } from './platform'
 
 export const etWorkspaceId = 'ET-052'
@@ -171,26 +172,6 @@ function directoryHasName(workspace: SharedWorkspace, name: string, folderId?: s
       && (ignored?.kind !== 'file' || file.id !== ignored.id) && normalizedName(file.name) === comparison)
 }
 
-function folderTreeIds(workspace: SharedWorkspace, folderId: string) {
-  const childrenByParent = new Map<string, string[]>()
-  for (const folder of workspace.folders) {
-    if (folder.parentId === undefined) continue
-    const children = childrenByParent.get(folder.parentId) ?? []
-    children.push(folder.id)
-    childrenByParent.set(folder.parentId, children)
-  }
-
-  const visited = new Set<string>()
-  const pending = [folderId]
-  while (pending.length) {
-    const id = pending.pop()!
-    if (visited.has(id)) continue
-    visited.add(id)
-    for (const child of childrenByParent.get(id) ?? []) pending.push(child)
-  }
-  return visited
-}
-
 export const useSharedWorkspacesStore = defineStore('shared-workspaces', () => {
   const platform = usePlatformStore()
   const state = shallowRef(readWorkspaces() ?? seedWorkspaces())
@@ -324,19 +305,37 @@ export const useSharedWorkspacesStore = defineStore('shared-workspaces', () => {
     })
   }
 
-  function addFile(spaceId: string, file: FileInput) {
+  function writeFile(spaceId: string, file: FileInput, artifact?: { id: string; rootFolderId?: string }) {
     return changeWorkspace(spaceId, 'edit', workspace => {
       const name = file.name.trim()
+      const existing = artifact && workspace.files.find(item => item.id === artifact.id)
+      const userId = platform.currentUser.id
+      if (existing && existing.uploadedById !== userId) return
+      if (artifact?.rootFolderId !== undefined) {
+        if (!workspace.folders.some(folder => folder.id === artifact.rootFolderId)) return
+        const subtree = workspaceFolderTree(workspace.folders, artifact.rootFolderId)
+        if (!subtree.has(file.folderId ?? '') || (existing && !subtree.has(existing.folderId ?? ''))) return
+      }
       if (!validEntryName(name) || !fileTypes.has(file.type) || !Number.isSafeInteger(file.size)
-        || file.size < 0 || file.size > fileSizeLimit || directoryHasName(workspace, name, file.folderId)
+        || file.size < 0 || file.size > fileSizeLimit
+        || directoryHasName(workspace, name, file.folderId, existing ? { kind: 'file', id: existing.id } : undefined)
         || (file.folderId !== undefined && !workspace.folders.some(folder => folder.id === file.folderId))
-        || state.value.reduce((sum, entry) => sum + entry.files.reduce((size, item) => size + item.size, 0), file.size) > sharedSizeLimit) return
+        || state.value.reduce((sum, entry) => sum + entry.files.reduce((total, item) =>
+          total + (entry.id === spaceId && item.id === existing?.id ? 0 : item.size), 0), file.size) > sharedSizeLimit) return
 
       const uploaded: SharedWorkspaceFile = {
-        ...file, id: makeId('shared-file'), name, updatedAt: nowIso(), uploadedById: platform.currentUser.id,
+        ...file, id: artifact?.id ?? makeId('shared-file'), name, updatedAt: nowIso(), uploadedById: userId,
       }
-      return { files: [...workspace.files, uploaded] }
+      return { files: existing ? workspace.files.map(item => item.id === uploaded.id ? uploaded : item) : [...workspace.files, uploaded] }
     })
+  }
+
+  function addFile(spaceId: string, file: FileInput) {
+    return writeFile(spaceId, file)
+  }
+
+  function saveArtifact(spaceId: string, id: string, file: FileInput, rootFolderId?: string) {
+    return writeFile(spaceId, file, { id, rootFolderId })
   }
 
   function changeEntry(
@@ -373,7 +372,7 @@ export const useSharedWorkspacesStore = defineStore('shared-workspaces', () => {
   function moveEntry(spaceId: string, kind: EntryKind, id: string, folderId?: string) {
     return changeEntry(spaceId, kind, id, (workspace, current) => {
       if (folderId !== undefined && (!workspace.folders.some(folder => folder.id === folderId)
-        || (kind === 'folder' && folderTreeIds(workspace, id).has(folderId)))) return
+        || (kind === 'folder' && workspaceFolderTree(workspace.folders, id).has(folderId)))) return
       if (directoryHasName(workspace, current.name, folderId, { kind, id })) return
       return { name: current.name, folderId }
     })
@@ -386,7 +385,7 @@ export const useSharedWorkspacesStore = defineStore('shared-workspaces', () => {
         return { files: workspace.files.filter(file => file.id !== id) }
       }
       if (kind !== 'folder' || isEtWorkspaceSystemFolder(spaceId, id) || !workspace.folders.some(folder => folder.id === id)) return
-      const folderIds = folderTreeIds(workspace, id)
+      const folderIds = workspaceFolderTree(workspace.folders, id)
       if ([...folderIds].some(folderId => isEtWorkspaceSystemFolder(spaceId, folderId))) return
       return {
         folders: workspace.folders.filter(folder => !folderIds.has(folder.id)),
@@ -397,7 +396,7 @@ export const useSharedWorkspacesStore = defineStore('shared-workspaces', () => {
 
   return {
     workspaces, canAccess, canEdit, canManage, createWorkspace, renameWorkspace, deleteWorkspace, leaveWorkspace,
-    setMember, removeMember, createFolder, addFile,
+    setMember, removeMember, createFolder, addFile, saveArtifact,
     renameEntry, moveEntry, deleteEntry,
   }
 })

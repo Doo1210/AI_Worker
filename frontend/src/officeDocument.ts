@@ -1,4 +1,4 @@
-import type { WorkspaceFile } from '@/stores/platform'
+import type { DirectoryFile } from '@/workspaceDirectory'
 
 const meetingRequest = /会议|纪要|周会|例会|行动项/
 const summaryRequest = /汇总|整理|梳理|总结|周报|汇报|报告|提炼/
@@ -6,7 +6,7 @@ const actionLine = /待办|后续事项|行动项|下一步|后续安排|下周�
 const actionHeading = /^(?:待办|后续事项|行动项|下一步|后续安排|下周安排)[:：]?$/
 const sectionHeading = /^(?:#{1,6}\s+|[一二三四五六七八九十]+[、.．])/
 
-export function draftOfficeDocument(prompt: string, files: WorkspaceFile[]) {
+export function draftOfficeDocument(prompt: string, files: Pick<DirectoryFile, 'name' | 'dataUrl' | 'content'>[]) {
   const isMeeting = meetingRequest.test(prompt)
   if (!files.length || (!isMeeting && !summaryRequest.test(prompt))) return
 

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import PageHeader from '@/components/PageHeader.vue'
 import { computed, nextTick, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import { ArrowLeft, ArrowRight, ChatLineRound, CircleCheck, Clock, Close, Document, Tickets } from '@element-plus/icons-vue'
@@ -117,9 +118,9 @@ function continueTask() {
 </script>
 
 <template>
-  <section class="page page-surface employee-tasks-page" :aria-label="selectedTask?.title ?? assignedTasksLabel">
+  <section class="page page-surface page-with-control-inset employee-tasks-page" :aria-label="selectedTask?.title ?? assignedTasksLabel">
     <template v-if="!taskId">
-      <header class="page-controls">
+      <PageHeader :title="assignedTasksLabel">
         <EmployeeTaskViewTabs />
         <div class="page-toolbar page-tab-toolbar">
           <div class="page-segments task-status-filters" role="group" aria-label="按任务状态筛选">
@@ -133,7 +134,7 @@ function continueTask() {
             </RouterLink>
           </div>
         </div>
-      </header>
+      </PageHeader>
 
       <ul v-if="filteredTasks.length || filteredScenarioTasks.length" class="page-body task-grid" aria-label="交办任务">
         <li v-for="task in filteredScenarioTasks" :key="task.id">
@@ -178,12 +179,14 @@ function continueTask() {
     </template>
 
     <template v-else>
-      <div class="page-controls page-toolbar page-tab-toolbar">
-        <RouterLink class="task-back" :to="taskListLink"><el-icon><ArrowLeft /></el-icon> {{ taskListLabel }}</RouterLink>
-        <div v-if="conversationLink" class="page-toolbar-controls">
+      <PageHeader :title="selectedTask?.title ?? '任务详情'">
+        <template #back>
+          <RouterLink class="task-back" :to="taskListLink"><el-icon><ArrowLeft /></el-icon> {{ taskListLabel }}</RouterLink>
+        </template>
+        <template v-if="conversationLink" #actions>
           <RouterLink class="task-link" :to="conversationLink"><el-icon><ChatLineRound /></el-icon> 返回原会话</RouterLink>
-        </div>
-      </div>
+        </template>
+      </PageHeader>
       <template v-if="selectedTask">
         <div class="page-body task-detail-layout">
           <section class="panel detail-panel progress-panel" aria-labelledby="task-progress-heading">
