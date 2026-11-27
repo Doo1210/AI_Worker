@@ -1,0 +1,1 @@
+import{p as i,x as n,q as p}from"./index-BJvzZTaa.js";function c(){const e=i(),u=n();function s(r,o=""){return p({get:()=>typeof e.query[r]=="string"?String(e.query[r]):o,set:t=>{u.replace({query:{...e.query,[r]:t&&t!==o?t:void 0,page:void 0}})}})}return{field:s}}export{c as u};
